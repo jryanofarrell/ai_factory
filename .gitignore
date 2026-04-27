@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ai_factory — host-specific and secret files
+manifest.yaml
+.factory/
