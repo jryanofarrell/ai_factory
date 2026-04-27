@@ -220,3 +220,4 @@ __marimo__/
 # ai_factory — host-specific and secret files
 manifest.yaml
 .factory/
+repos/

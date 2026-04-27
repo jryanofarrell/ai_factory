@@ -3,8 +3,7 @@ queue_dir: .factory/queue
 repos:
   thms-platform:
     github: toms-hms/thms-platform
-    local_path: ~/factory/repos/thms-platform
     default_branch: main
     test_command: "npm test"
-    build_command: "npm run build"
     linear_team: THMS
+    # local_path: /some/other/path  # override if you want the repo elsewhere

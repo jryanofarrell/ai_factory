@@ -1,10 +1,10 @@
 # ai_factory
 
-Personal AI factory that turns Linear tickets into GitHub PRs.
+Personal AI factory that turns Linear tickets into GitHub PRs, running locally on your machine.
 
 ## What it does
 
-`ai_factory` reads ready tickets from a Linear queue, runs a Claude Code executor inside the appropriate target repository, opens a pull request, and writes the result back to Linear. A human reviews and merges the PR; the factory never merges automatically.
+`ai_factory` reads a ticket file, invokes a Claude Code executor inside the target repository, and opens a GitHub pull request. A human reviews and merges the PR; the factory never merges automatically.
 
 See `docs/ARCHITECTURE.md` for the system design and `docs/PHASES.md` for build status.
 
@@ -19,10 +19,23 @@ uv sync
 # Copy the manifest template and edit local_path for each registered repo
 cp manifest.example.yaml manifest.yaml
 $EDITOR manifest.yaml
+```
 
-# Verify the CLI works
+### Auth requirements
+
+The factory does not manage credentials. Before running, ensure:
+
+- **`git`** installed and configured (`git config user.email` etc.)
+- **`gh`** CLI installed and authenticated: `gh auth status` must pass with push access to the target repo
+- **`claude`** CLI installed and authenticated. Set the model to Sonnet: `claude config set model claude-sonnet-4-5` (or similar)
+
+If any of these are missing or not on PATH, `factory run-ticket` will exit early with a clear error.
+
+## Usage
+
+```sh
 uv run factory --help
-uv run factory version
+uv run factory run-ticket examples/tickets/hello-world.md --repo thms-platform
 ```
 
 ## Docs
@@ -36,4 +49,4 @@ uv run factory version
 
 ## Current status
 
-Phase 0 — scaffolding only. The only working command is `factory version`. See `docs/PHASES.md` for the build plan.
+Phase 1 — single-shot executor. Runs a ticket file end-to-end and opens a PR. No Linear integration yet. See `docs/PHASES.md` for the full plan.
