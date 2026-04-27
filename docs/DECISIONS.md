@@ -145,3 +145,21 @@ These risks were identified during the design conversation but are not turned in
 - **Re-run determinism.** Running the executor twice on the same ticket should not produce conflicting branches or PRs. Addressed in Phase 1 by appending a short UUID suffix to branch names (`{identifier}-{title}-{uuid[:8]}`), so each run produces a distinct branch regardless of whether a previous run's branch was merged or deleted.
 
 - **Context bloat from loading every sub-repo's CLAUDE.md per run.** If the executor loads `CLAUDE.md` files from all registered repos, the context window fills with irrelevant rules. Resolved by loading only the target repo's `CLAUDE.md` — the executor is told which repo it is working in, and it loads only that repo's context.
+
+---
+
+## ADR-010: Ticket metadata in issue description sections, not Linear custom properties
+
+**Status:** Accepted — supersedes ADR-004
+
+**Context:** ADR-004 specified that `scope_paths`, `acceptance_criteria`, `budget_tokens`, and `budget_minutes` would live as custom properties on Linear issues, queryable via GraphQL. During the Phase 2 spike, introspecting Linear's GraphQL schema revealed that custom properties are not exposed on the `Issue` type at all — `customFields`, `customProperties`, and `IssuePropertyValue` do not exist in the API. There is no way to read custom fields via GraphQL with the current API version.
+
+**Decision:** All ticket metadata is embedded in the issue description as structured Markdown sections. The factory parses these sections at pull time. The required and optional sections are:
+
+- `## Acceptance Criteria` (required) — bulleted list of success conditions
+- `## Scope Paths` (optional) — one glob pattern per line; blank lines and `#` comments stripped
+- `## Budget` (optional) — `tokens: N` and `minutes: N` on separate lines; defaults apply if absent
+- `## Target Repo` (optional) — single line with the manifest repo key; overrides team-default resolution
+- `## Notes` (optional) — freeform context for the executor
+
+**Consequences:** Users write structured Markdown in the Linear description field, which is readable and editable in the Linear UI. No workspace-level custom property setup is required. The section names are case-sensitive and must appear exactly as above. This is simpler to set up than custom properties and works within the current API constraints. If Linear exposes custom properties in a future API version, this decision can be revisited — but the description format is not worse from a usability standpoint.

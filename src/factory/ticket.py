@@ -19,6 +19,24 @@ class Ticket:
     notes: str = ""
     raw_body: str = ""
 
+    def to_markdown(self) -> str:
+        fm: dict = {"id": self.id, "title": self.title, "target_repo": self.target_repo}
+        if self.scope_paths:
+            fm["scope_paths"] = self.scope_paths
+        if self.budget_tokens != 50_000:
+            fm["budget_tokens"] = self.budget_tokens
+        if self.budget_minutes != 30:
+            fm["budget_minutes"] = self.budget_minutes
+        if self.linear_url:
+            fm["linear_url"] = self.linear_url
+
+        parts = [f"## Acceptance Criteria\n\n{self.acceptance_criteria}"]
+        if self.notes:
+            parts.append(f"## Notes\n\n{self.notes}")
+
+        fm_str = yaml.dump(fm, default_flow_style=False, allow_unicode=True)
+        return f"---\n{fm_str}---\n\n" + "\n\n".join(parts) + "\n"
+
 
 def parse_ticket(path: Path) -> Ticket:
     text = path.read_text()

@@ -19,6 +19,28 @@ def version() -> None:
 
 
 @app.command()
+def pull_tickets(
+    team: str | None = typer.Option(None, "--team", help="Restrict pull to a single Linear team key."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print would-be writes without touching disk."),
+    manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml (default: ./manifest.yaml)."),
+) -> None:
+    """Pull ready Linear tickets to the local queue directory."""
+    import os
+    from dotenv import load_dotenv
+    from .sync import pull_tickets as _pull
+
+    load_dotenv()
+    api_key = os.environ.get("LINEAR_API_KEY")
+
+    try:
+        result = _pull(manifest_path=manifest, team_filter=team, dry_run=dry_run, api_key=api_key)
+        result.print_summary()
+    except (ValueError, FileNotFoundError) as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
 def run_ticket(
     ticket_file: Path = typer.Argument(..., help="Path to the ticket markdown file."),
     repo: str = typer.Option(..., "--repo", help="Repo key from manifest.yaml."),
