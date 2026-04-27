@@ -4,6 +4,5 @@ repos:
   thms-platform:
     github: toms-hms/thms-platform
     default_branch: main
-    test_command: "npm test"
-    linear_team: THMS
+    linear_team: THM   # verify your actual team key in Linear → Settings → Teams
     # local_path: /some/other/path  # override if you want the repo elsewhere
