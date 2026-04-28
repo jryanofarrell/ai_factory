@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import shutil
+import signal
 import subprocess
-from dataclasses import dataclass
+import threading
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -13,6 +16,8 @@ class AgentResult:
     cost_usd: float | None = None
     duration_ms: int | None = None
     output: str | None = None
+    timed_out: bool = False
+    tokens_used: int | None = None
 
 
 def detect_install_command(local_path: Path) -> str | None:
@@ -28,7 +33,6 @@ def detect_install_command(local_path: Path) -> str | None:
 
 
 def detect_test_command(local_path: Path) -> str | None:
-    # Makefile with a test target takes priority — likely Docker-based
     if _makefile_has_target(local_path, "test"):
         return "make test"
     if (local_path / "package.json").exists():
@@ -78,46 +82,37 @@ def check_docker() -> None:
 
 
 def ensure_stack_ready(local_path: Path) -> None:
-    """Ensure Docker stack is up, healthy, and migrated. Starts it if not running."""
     check_docker()
-
     result = subprocess.run(
         ["docker", "compose", "ps", "--services", "--filter", "status=running"],
-        cwd=local_path,
-        capture_output=True,
-        text=True,
+        cwd=local_path, capture_output=True, text=True,
     )
     running = set(result.stdout.strip().splitlines())
-
     if "api" not in running or "web" not in running or "postgres" not in running:
         print("$ docker compose up --build -d")
         result = subprocess.run(["docker", "compose", "up", "--build", "-d"], cwd=local_path)
         if result.returncode != 0:
             raise RuntimeError("docker compose up --build -d failed. Check Docker logs.")
-
     _wait_for_postgres(local_path)
     _wait_for_api()
 
 
 def _wait_for_postgres(local_path: Path, timeout: int = 60) -> None:
-    import time
     print("Waiting for postgres to be ready...", flush=True)
     deadline = time.time() + timeout
     while time.time() < deadline:
         result = subprocess.run(
             ["docker", "compose", "exec", "-T", "postgres", "pg_isready"],
-            cwd=local_path,
-            capture_output=True,
+            cwd=local_path, capture_output=True,
         )
         if result.returncode == 0:
             print("Postgres is ready.")
             return
         time.sleep(2)
-    raise RuntimeError(f"Postgres did not become ready within {timeout}s. Check: docker compose logs postgres")
+    raise RuntimeError(f"Postgres did not become ready within {timeout}s.")
 
 
 def _wait_for_api(timeout: int = 120) -> None:
-    import time
     import urllib.request
     print("Waiting for API to be ready...", flush=True)
     deadline = time.time() + timeout
@@ -128,7 +123,7 @@ def _wait_for_api(timeout: int = 120) -> None:
             return
         except Exception:
             time.sleep(2)
-    raise RuntimeError(f"API did not become ready within {timeout}s. Check: docker compose logs api")
+    raise RuntimeError(f"API did not become ready within {timeout}s.")
 
 
 def _run(cmd: list[str], cwd: Path, stream: bool = False) -> subprocess.CompletedProcess:
@@ -141,9 +136,7 @@ def _run(cmd: list[str], cwd: Path, stream: bool = False) -> subprocess.Complete
 def is_dirty(local_path: Path) -> bool:
     result = subprocess.run(
         ["git", "status", "--porcelain"],
-        cwd=local_path,
-        capture_output=True,
-        text=True,
+        cwd=local_path, capture_output=True, text=True,
     )
     return bool(result.stdout.strip())
 
@@ -152,13 +145,34 @@ def has_changes(local_path: Path) -> bool:
     return is_dirty(local_path)
 
 
+def get_changed_files(local_path: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=local_path, capture_output=True, text=True,
+    )
+    files = []
+    for line in result.stdout.splitlines():
+        if len(line) > 3:
+            files.append(line[3:].strip().lstrip('"').rstrip('"'))
+    return files
+
+
+def check_scope(local_path: Path, scope_paths: list[str]) -> list[str]:
+    """Returns list of changed files that violate scope_paths globs."""
+    import pathspec
+    changed = get_changed_files(local_path)
+    if not changed:
+        return []
+    spec = pathspec.PathSpec.from_lines("gitignore", scope_paths)
+    return [f for f in changed if not spec.match_file(f)]
+
+
 def sync_repo(local_path: Path, github: str, default_branch: str) -> None:
     if not local_path.exists():
         local_path.parent.mkdir(parents=True, exist_ok=True)
         _run(
             ["git", "clone", f"https://github.com/{github}.git", str(local_path)],
-            cwd=local_path.parent,
-            stream=True,
+            cwd=local_path.parent, stream=True,
         )
     else:
         result = _run(["git", "fetch", "origin"], cwd=local_path, stream=True)
@@ -183,42 +197,78 @@ def delete_branch(local_path: Path, branch: str, default_branch: str) -> None:
     subprocess.run(["git", "branch", "-D", branch], cwd=local_path, capture_output=True)
 
 
-def run_agent(local_path: Path, prompt: str, capture_cost: bool = False) -> AgentResult:
-    # capture_cost=True uses --output-format json to get cost data (no live streaming)
-    # capture_cost=False streams output live to the terminal
+def undo_commit(local_path: Path) -> None:
+    subprocess.run(["git", "reset", "--hard", "HEAD~1"], cwd=local_path, capture_output=True)
+
+
+def run_agent(
+    local_path: Path,
+    prompt: str,
+    capture_cost: bool = False,
+    budget_minutes: float | None = None,
+) -> AgentResult:
+    # Token cap: claude CLI does not expose a --max-tokens flag for total context budget.
+    # Token enforcement is therefore deferred to Phase 4+ tooling; only wall-clock time
+    # is enforced here. Token usage is captured for reporting only (via --output-format json).
     cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions"]
+    timeout_s = budget_minutes * 60 if budget_minutes else None
+
     if capture_cost:
         print("$ claude -p <prompt> --dangerously-skip-permissions --output-format json")
         cmd += ["--output-format", "json"]
-        result = subprocess.run(cmd, cwd=local_path, capture_output=True, text=True)
-        cost_usd = None
-        duration_ms = None
-        output = None
-        if result.stdout:
-            try:
-                data = json.loads(result.stdout.strip())
-                cost_usd = data.get("total_cost_usd")
-                duration_ms = data.get("duration_ms")
-                output = data.get("result")
-                if output:
-                    print(output)
-            except json.JSONDecodeError:
-                output = result.stdout
-                print(output)
-        return AgentResult(
-            exit_code=result.returncode,
-            cost_usd=cost_usd,
-            duration_ms=duration_ms,
-            output=output,
-        )
+        proc = subprocess.Popen(cmd, cwd=local_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     else:
         print("$ claude -p <prompt> --dangerously-skip-permissions")
-        result = subprocess.run(cmd, cwd=local_path)
-        return AgentResult(exit_code=result.returncode)
+        proc = subprocess.Popen(cmd, cwd=local_path)
+
+    timed_out = False
+    try:
+        stdout, _ = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+        return AgentResult(exit_code=-1, timed_out=True)
+
+    if not capture_cost:
+        return AgentResult(exit_code=proc.returncode)
+
+    cost_usd = None
+    duration_ms = None
+    output = None
+    tokens_used = None
+    if stdout:
+        try:
+            data = json.loads(stdout.strip())
+            cost_usd = data.get("total_cost_usd")
+            duration_ms = data.get("duration_ms")
+            output = data.get("result")
+            usage = data.get("usage", {})
+            tokens_used = (
+                usage.get("input_tokens", 0) +
+                usage.get("output_tokens", 0) +
+                usage.get("cache_read_input_tokens", 0)
+            )
+            if output:
+                print(output)
+        except json.JSONDecodeError:
+            output = stdout
+            print(output)
+
+    return AgentResult(
+        exit_code=proc.returncode,
+        cost_usd=cost_usd,
+        duration_ms=duration_ms,
+        output=output,
+        tokens_used=tokens_used,
+    )
 
 
 def run_shell_command(cmd: str, cwd: Path) -> subprocess.CompletedProcess:
-    # shell=True needed for user-defined commands that may use shell syntax
     print(f"$ {cmd}")
     return subprocess.run(cmd, shell=True, cwd=cwd)  # noqa: S602
 
@@ -242,13 +292,88 @@ def create_pr(local_path: Path, title: str, body: str, base: str, head: str) -> 
     print(f"$ gh pr create --title {title!r} --base {base} --head {head}")
     result = subprocess.run(
         ["gh", "pr", "create", "--title", title, "--body", body, "--base", base, "--head", head],
-        cwd=local_path,
-        capture_output=True,
-        text=True,
+        cwd=local_path, capture_output=True, text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(
             f"gh pr create failed:\n{result.stderr}\n"
-            f"Branch '{head}' and commit are preserved. Fix the issue and re-run gh pr create manually."
+            f"Branch '{head}' preserved. Re-run gh pr create manually."
         )
     return result.stdout.strip()
+
+
+def secret_scan(local_path: Path) -> list[str]:
+    """Run gitleaks on the latest commit. Returns list of rule names that fired.
+    Returns empty list if gitleaks is not installed (soft failure)."""
+    if not shutil.which("gitleaks"):
+        print("Warning: gitleaks not on PATH — secret scan skipped. Install gitleaks for full hardening.")
+        return []
+
+    result = subprocess.run(
+        ["gitleaks", "detect", "--source", ".", "--log-opts", "HEAD~1..HEAD",
+         "--report-format", "json", "--report-path", "/tmp/gitleaks-report.json",
+         "--no-banner"],
+        cwd=local_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return []
+
+    try:
+        import json as _json
+        report = _json.loads(Path("/tmp/gitleaks-report.json").read_text())
+        return list({f.get("RuleID", "unknown") for f in (report or [])})
+    except Exception:
+        return ["unknown"]
+
+
+def cleanup_stale_branches(local_path: Path, github: str, stale_days: int = 7) -> list[str]:
+    """Delete remote factory/* branches older than stale_days with no open PRs."""
+    result = subprocess.run(
+        ["git", "ls-remote", "origin", "refs/heads/factory/*"],
+        cwd=local_path, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return []
+
+    deleted = []
+    for line in result.stdout.strip().splitlines():
+        if not line:
+            continue
+        sha, ref = line.split("\t", 1)
+        branch = ref.removeprefix("refs/heads/")
+
+        # Check commit age
+        age_result = subprocess.run(
+            ["git", "log", "-1", "--format=%ct", sha],
+            cwd=local_path, capture_output=True, text=True,
+        )
+        if age_result.returncode != 0 or not age_result.stdout.strip():
+            continue
+        age_s = time.time() - int(age_result.stdout.strip())
+        if age_s < stale_days * 86400:
+            continue
+
+        # Check for open PRs
+        pr_result = subprocess.run(
+            ["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number"],
+            cwd=local_path, capture_output=True, text=True,
+        )
+        if pr_result.returncode == 0:
+            prs = json.loads(pr_result.stdout or "[]")
+            if prs:
+                continue
+
+        # Delete
+        del_result = subprocess.run(
+            ["git", "push", "origin", "--delete", branch],
+            cwd=local_path, capture_output=True, text=True,
+        )
+        if del_result.returncode == 0:
+            print(f"  Deleted stale branch: {branch}")
+            deleted.append(branch)
+
+    # Prune local refs
+    subprocess.run(["git", "fetch", "--prune"], cwd=local_path, capture_output=True)
+    return deleted

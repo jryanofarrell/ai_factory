@@ -22,6 +22,8 @@ class Manifest:
     version: int
     repos: dict[str, RepoConfig]
     queue_dir: str = ".factory/queue"
+    stale_branch_days: int = 7
+    secret_scan: bool = True
 
 
 def load_manifest(path: Path | None = None) -> Manifest:
@@ -55,4 +57,6 @@ def load_manifest(path: Path | None = None) -> Manifest:
         version=int(data.get("version", 1)),
         repos=repos,
         queue_dir=data.get("queue_dir", ".factory/queue"),
+        stale_branch_days=int(data.get("stale_branch_days", 7)),
+        secret_scan=bool(data.get("secret_scan", True)),
     )
