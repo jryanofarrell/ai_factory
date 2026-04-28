@@ -16,6 +16,7 @@ class Ticket:
     budget_tokens: int = 50_000
     budget_minutes: int = 30
     linear_url: str | None = None
+    linear_id: str | None = None  # UUID used for Linear API write-back
     notes: str = ""
     raw_body: str = ""
 
@@ -29,6 +30,8 @@ class Ticket:
             fm["budget_minutes"] = self.budget_minutes
         if self.linear_url:
             fm["linear_url"] = self.linear_url
+        if self.linear_id:
+            fm["linear_id"] = self.linear_id
 
         parts = [f"## Acceptance Criteria\n\n{self.acceptance_criteria}"]
         if self.notes:
@@ -74,6 +77,7 @@ def parse_ticket(path: Path) -> Ticket:
         budget_tokens=int(fm.get("budget_tokens", 50_000)),
         budget_minutes=int(fm.get("budget_minutes", 30)),
         linear_url=fm.get("linear_url"),
+        linear_id=fm.get("linear_id"),
         notes=_extract_section(body, "Notes") or "",
         raw_body=body,
     )

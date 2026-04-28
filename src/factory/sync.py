@@ -157,6 +157,7 @@ def _issue_to_ticket(issue: dict[str, Any], manifest: Manifest, default_repo: st
         budget_tokens=budget_tokens,
         budget_minutes=budget_minutes,
         linear_url=issue["url"],
+        linear_id=issue.get("id"),
         notes=notes,
     )
 

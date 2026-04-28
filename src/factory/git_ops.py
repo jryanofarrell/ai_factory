@@ -3,7 +3,16 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass
+class AgentResult:
+    exit_code: int
+    cost_usd: float | None = None
+    duration_ms: int | None = None
+    output: str | None = None
 
 
 def detect_install_command(local_path: Path) -> str | None:
@@ -174,13 +183,38 @@ def delete_branch(local_path: Path, branch: str, default_branch: str) -> None:
     subprocess.run(["git", "branch", "-D", branch], cwd=local_path, capture_output=True)
 
 
-def run_agent(local_path: Path, prompt: str) -> int:
-    print("$ claude -p <prompt> --dangerously-skip-permissions")
-    result = subprocess.run(
-        ["claude", "-p", prompt, "--dangerously-skip-permissions"],
-        cwd=local_path,
-    )
-    return result.returncode
+def run_agent(local_path: Path, prompt: str, capture_cost: bool = False) -> AgentResult:
+    # capture_cost=True uses --output-format json to get cost data (no live streaming)
+    # capture_cost=False streams output live to the terminal
+    cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions"]
+    if capture_cost:
+        print("$ claude -p <prompt> --dangerously-skip-permissions --output-format json")
+        cmd += ["--output-format", "json"]
+        result = subprocess.run(cmd, cwd=local_path, capture_output=True, text=True)
+        cost_usd = None
+        duration_ms = None
+        output = None
+        if result.stdout:
+            try:
+                data = json.loads(result.stdout.strip())
+                cost_usd = data.get("total_cost_usd")
+                duration_ms = data.get("duration_ms")
+                output = data.get("result")
+                if output:
+                    print(output)
+            except json.JSONDecodeError:
+                output = result.stdout
+                print(output)
+        return AgentResult(
+            exit_code=result.returncode,
+            cost_usd=cost_usd,
+            duration_ms=duration_ms,
+            output=output,
+        )
+    else:
+        print("$ claude -p <prompt> --dangerously-skip-permissions")
+        result = subprocess.run(cmd, cwd=local_path)
+        return AgentResult(exit_code=result.returncode)
 
 
 def run_shell_command(cmd: str, cwd: Path) -> subprocess.CompletedProcess:

@@ -19,6 +19,27 @@ def version() -> None:
 
 
 @app.command()
+def run(
+    no_pull: bool = typer.Option(False, "--no-pull", help="Skip pulling from Linear; run queue as-is."),
+    ticket: str | None = typer.Option(None, "--ticket", help="Run a single ticket by ID (e.g. THM-5)."),
+    manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml."),
+) -> None:
+    """Pull ready Linear tickets and execute each, writing results back to Linear."""
+    import os
+    from dotenv import load_dotenv
+    from .orchestrator import run as _run
+
+    load_dotenv()
+    api_key = os.environ.get("LINEAR_API_KEY")
+
+    try:
+        _run(manifest_path=manifest, no_pull=no_pull, ticket_filter=ticket, api_key=api_key)
+    except (ValueError, FileNotFoundError) as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
 def pull_tickets(
     team: str | None = typer.Option(None, "--team", help="Restrict pull to a single Linear team key."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print would-be writes without touching disk."),
@@ -47,11 +68,14 @@ def run_ticket(
     manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml (default: ./manifest.yaml)."),
 ) -> None:
     """Run a ticket through the executor pipeline and open a PR."""
-    from .runner import run_ticket as _run
+    from .runner import run_ticket_from_file
 
     try:
-        _run(ticket_file, repo, manifest)
-    except (ValueError, FileNotFoundError, RuntimeError) as e:
+        result = run_ticket_from_file(ticket_file, repo, manifest)
+        if not result.success:
+            typer.echo(f"Error: {result.error}", err=True)
+            raise typer.Exit(1)
+    except (ValueError, FileNotFoundError) as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 

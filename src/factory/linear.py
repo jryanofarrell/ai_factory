@@ -32,14 +32,55 @@ query($teamKey: String!, $labelName: String!) {
     first: 100
   ) {
     nodes {
+      id
       identifier
       title
       description
       url
       state { name }
       team { key }
-      labels { nodes { name } }
+      labels { nodes { id name } }
     }
+  }
+}
+"""
+
+COMMENT_MUTATION = """
+mutation($issueId: String!, $body: String!) {
+  commentCreate(input: { issueId: $issueId, body: $body }) {
+    success
+  }
+}
+"""
+
+STATE_QUERY = """
+query($teamKey: String!) {
+  workflowStates(filter: { team: { key: { eq: $teamKey } } }) {
+    nodes { id name }
+  }
+}
+"""
+
+ISSUE_UPDATE_MUTATION = """
+mutation($id: String!, $stateId: String) {
+  issueUpdate(id: $id, input: { stateId: $stateId }) {
+    success
+  }
+}
+"""
+
+LABEL_QUERY = """
+query($teamKey: String!, $labelName: String!) {
+  issueLabels(filter: { team: { key: { eq: $teamKey } }, name: { eq: $labelName } }) {
+    nodes { id name }
+  }
+}
+"""
+
+ISSUE_ADD_LABEL_MUTATION = """
+mutation($id: String!, $labelIds: [String!]!) {
+  issueAddLabel(id: $id, labelId: $labelIds) {
+    success
   }
 }
 """
@@ -61,6 +102,34 @@ class LinearClient:
     def get_ready_issues(self, team_key: str) -> list[dict[str, Any]]:
         data = self._query(ISSUES_QUERY, {"teamKey": team_key, "labelName": READY_LABEL})
         return data["issues"]["nodes"]
+
+    def comment_on_issue(self, issue_id: str, body: str) -> None:
+        self._query(COMMENT_MUTATION, {"issueId": issue_id, "body": body})
+
+    def get_state_id(self, team_key: str, state_name: str) -> str | None:
+        data = self._query(STATE_QUERY, {"teamKey": team_key})
+        for node in data["workflowStates"]["nodes"]:
+            if node["name"] == state_name:
+                return node["id"]
+        return None
+
+    def transition_issue(self, issue_id: str, state_id: str) -> None:
+        self._query(ISSUE_UPDATE_MUTATION, {"id": issue_id, "stateId": state_id})
+
+    def get_label_id(self, team_key: str, label_name: str) -> str | None:
+        data = self._query(LABEL_QUERY, {"teamKey": team_key, "labelName": label_name})
+        nodes = data.get("issueLabels", {}).get("nodes", [])
+        return nodes[0]["id"] if nodes else None
+
+    def apply_label(self, issue_id: str, label_id: str) -> None:
+        self._query(
+            """
+            mutation($id: String!, $labelId: String!) {
+              issueAddLabel(id: $id, labelId: $labelId) { success }
+            }
+            """,
+            {"id": issue_id, "labelId": label_id},
+        )
 
     def _query(self, query: str, variables: dict | None = None, attempt: int = 0) -> dict[str, Any]:
         try:
