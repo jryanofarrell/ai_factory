@@ -23,11 +23,12 @@ import requests
 GRAPHQL_URL = "https://api.linear.app/graphql"
 
 ISSUES_QUERY = """
-query($teamKey: String!, $labelName: String!) {
+query($teamKey: String!, $labelName: String!, $stateName: String!) {
   issues(
     filter: {
       team: { key: { eq: $teamKey } }
       labels: { name: { eq: $labelName } }
+      state: { name: { eq: $stateName } }
     }
     first: 100
   ) {
@@ -69,6 +70,26 @@ mutation($id: String!, $stateId: String) {
 }
 """
 
+ISSUE_BY_IDENTIFIER_QUERY = """
+query($identifier: String!) {
+  issue(id: $identifier) {
+    id
+    identifier
+    title
+    url
+  }
+}
+"""
+
+ISSUE_UPDATE_DESCRIPTION_MUTATION = """
+mutation($id: String!, $title: String, $description: String) {
+  issueUpdate(id: $id, input: { title: $title, description: $description }) {
+    success
+    issue { id identifier url }
+  }
+}
+"""
+
 LABEL_QUERY = """
 query($teamKey: String!, $labelName: String!) {
   issueLabels(filter: { team: { key: { eq: $teamKey } }, name: { eq: $labelName } }) {
@@ -86,6 +107,7 @@ mutation($id: String!, $labelIds: [String!]!) {
 """
 
 READY_LABEL = "Ready For AI"
+READY_STATE = "Todo"
 
 
 class LinearError(Exception):
@@ -100,7 +122,7 @@ class LinearClient:
         }
 
     def get_ready_issues(self, team_key: str) -> list[dict[str, Any]]:
-        data = self._query(ISSUES_QUERY, {"teamKey": team_key, "labelName": READY_LABEL})
+        data = self._query(ISSUES_QUERY, {"teamKey": team_key, "labelName": READY_LABEL, "stateName": READY_STATE})
         return data["issues"]["nodes"]
 
     def comment_on_issue(self, issue_id: str, body: str) -> None:
@@ -120,6 +142,58 @@ class LinearClient:
         data = self._query(LABEL_QUERY, {"teamKey": team_key, "labelName": label_name})
         nodes = data.get("issueLabels", {}).get("nodes", [])
         return nodes[0]["id"] if nodes else None
+
+    def get_team_id(self, team_key: str) -> str | None:
+        data = self._query("""
+        query($teamKey: String!) {
+          teams(filter: { key: { eq: $teamKey } }) {
+            nodes { id key }
+          }
+        }
+        """, {"teamKey": team_key})
+        nodes = data.get("teams", {}).get("nodes", [])
+        return nodes[0]["id"] if nodes else None
+
+    def create_issue(
+        self,
+        team_id: str,
+        title: str,
+        description: str,
+        state_id: str,
+    ) -> dict[str, Any]:
+        # Safety: refuse to create directly in "Ready for Agent" state (ADR-006 + Phase 5 rule)
+        if state_id and "ready" in state_id.lower():
+            raise ValueError("create_issue: state_id must not be the Ready for Agent state")
+        data = self._query("""
+        mutation($teamId: String!, $title: String!, $description: String!, $stateId: String!) {
+          issueCreate(input: {
+            teamId: $teamId
+            title: $title
+            description: $description
+            stateId: $stateId
+          }) {
+            success
+            issue { id identifier url }
+          }
+        }
+        """, {"teamId": team_id, "title": title, "description": description, "stateId": state_id})
+        return data["issueCreate"]["issue"]
+
+    def get_issue_by_identifier(self, identifier: str) -> dict[str, Any] | None:
+        data = self._query(ISSUE_BY_IDENTIFIER_QUERY, {"identifier": identifier})
+        return data.get("issue")
+
+    def update_issue(
+        self,
+        issue_id: str,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        data = self._query(
+            ISSUE_UPDATE_DESCRIPTION_MUTATION,
+            {"id": issue_id, "title": title, "description": description},
+        )
+        return data["issueUpdate"]["issue"]
 
     def apply_label(self, issue_id: str, label_id: str) -> None:
         self._query(

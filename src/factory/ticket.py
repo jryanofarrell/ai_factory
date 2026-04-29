@@ -73,7 +73,7 @@ def parse_ticket(path: Path) -> Ticket:
         title=str(fm["title"]),
         target_repo=str(fm["target_repo"]),
         acceptance_criteria=acceptance_criteria,
-        scope_paths=list(fm.get("scope_paths") or []),
+        scope_paths=[p.replace("\\*", "*") for p in (fm.get("scope_paths") or [])],
         budget_tokens=int(fm.get("budget_tokens", 50_000)),
         budget_minutes=int(fm.get("budget_minutes", 30)),
         linear_url=fm.get("linear_url"),

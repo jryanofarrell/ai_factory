@@ -24,6 +24,7 @@ class Manifest:
     queue_dir: str = ".factory/queue"
     stale_branch_days: int = 7
     secret_scan: bool = True
+    stop_on_usage_limit: bool = True
 
 
 def load_manifest(path: Path | None = None) -> Manifest:
@@ -59,4 +60,5 @@ def load_manifest(path: Path | None = None) -> Manifest:
         queue_dir=data.get("queue_dir", ".factory/queue"),
         stale_branch_days=int(data.get("stale_branch_days", 7)),
         secret_scan=bool(data.get("secret_scan", True)),
+        stop_on_usage_limit=bool(data.get("stop_on_usage_limit", True)),
     )

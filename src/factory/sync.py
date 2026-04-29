@@ -126,7 +126,7 @@ def _issue_to_ticket(issue: dict[str, Any], manifest: Manifest, default_repo: st
     scope_text = _extract_section(description, "Scope Paths")
     if scope_text:
         for line in scope_text.splitlines():
-            line = line.strip()
+            line = line.strip().replace("\\*", "*")  # Linear escapes ** as \*\* in markdown
             if line and not line.startswith("#"):
                 scope_paths.append(line)
 

@@ -1,0 +1,201 @@
+# Skill: /run
+
+## Purpose
+
+Process all tickets in the factory queue end-to-end — natively, without spawning a subprocess. Pulls fresh tickets from Linear first, then works through the queue. Claude makes the code changes directly using its own tools, runs tests via Bash, and opens PRs. Linear write-back and memory are handled by calling `factory record-result` at the end of each ticket.
+
+## Before starting
+
+1. Read `manifest.yaml` to confirm which repos are registered and where they live.
+2. Pull the latest ready tickets from Linear:
+   ```bash
+   uv run factory pull-tickets
+   ```
+3. List all `.md` files in `.factory/queue/` (excluding the `processed/` subdirectory). These are the tickets to run.
+4. If there are no tickets, say so and stop.
+5. Print the list of tickets you're about to process and confirm the count.
+
+## For each ticket, in order
+
+Work through the queue sequentially. A failure on one ticket must not stop the rest.
+
+### Step 1 — Parse the ticket
+
+Read the ticket file. Extract:
+- `id`, `title`, `target_repo`, `scope_paths`, `budget_minutes`, `linear_id`, `linear_url`
+- The `## Acceptance Criteria` section (required)
+- The `## Notes` section (optional)
+
+If the ticket is malformed (missing required fields), skip it, print a clear error, and continue.
+
+Resolve the repo's `local_path` from `manifest.yaml`.
+
+### Step 2 — Sync the repo
+
+```bash
+cd <local_path>
+git status --porcelain  # check cleanliness, ignoring .claude/
+git fetch origin
+git checkout <default_branch>
+git pull --ff-only
+```
+
+If the working tree has non-`.claude/` changes, stop this ticket, report the dirty state, and continue to the next.
+
+### Step 3 — Create a branch
+
+```bash
+SHORT_UUID=$(python3 -c "import uuid; print(uuid.uuid4().hex[:8])")
+BRANCH="factory/<ticket-id-lowercase>-${SHORT_UUID}"
+git checkout -b $BRANCH
+```
+
+Record the branch name — you'll need it for error reporting.
+
+### Step 4 — Implement the changes
+
+Read the acceptance criteria carefully. Make all necessary file changes using your Edit and Write tools, working inside `<local_path>`.
+
+**Rules:**
+- Do not run `git commit` or `git push` yourself during this step.
+- Only modify files — no running the app, no starting servers.
+- Respect `scope_paths` if set: only touch files matching those globs.
+- If you realise mid-implementation that the acceptance criteria require touching files outside `scope_paths`, stop, clean the branch (checkout main, delete branch), record a scope violation failure, and continue to the next ticket.
+
+### Step 5 — Scope check
+
+If `scope_paths` is non-empty:
+```bash
+git status --porcelain
+```
+Compare every changed/added file against the `scope_paths` globs using:
+```bash
+python3 -c "
+import pathspec, sys
+changed = sys.argv[1:]
+spec = pathspec.PathSpec.from_lines('gitignore', <scope_paths>)
+violations = [f for f in changed if not spec.match_file(f)]
+print('\n'.join(violations))
+" <changed files>
+```
+If there are violations: checkout main, delete the branch, record scope violation, continue.
+
+### Step 6 — Install dependencies
+
+Detect and run the install command:
+- `package.json` present → `npm install`
+- `pyproject.toml` present → `uv sync`
+- `requirements.txt` present → `pip install -r requirements.txt`
+
+Run inside `<local_path>`.
+
+### Step 7 — Run tests
+
+Detect and run the test command:
+- `Makefile` with a `test` target → `make test` (requires Docker to be running)
+- `package.json` with a `test` script → `npm test`
+- `pyproject.toml` → `uv run pytest`
+
+If tests fail: **preserve the branch**, record the failure with the test output, and continue to the next ticket. Do not commit or push.
+
+### Step 8 — Write memory then commit
+
+Before committing, write the memory file so it gets committed into the PR and lands in the repo permanently:
+
+```bash
+# Create .claude/memory/ if it doesn't exist
+mkdir -p .claude/memory
+```
+
+Write `.claude/memory/<ticket-id-lower>_<YYYY-MM-DD>.md` using the standard memory format (see `.claude/skills/run/SKILL.md` memory format below), then update `.claude/memory/MEMORY.md` index.
+
+Then commit everything including the memory file:
+
+```bash
+git add -A
+git commit -m "<ticket-id>: <ticket-title>"
+```
+
+**Memory file format:**
+```markdown
+---
+name: <TICKET-ID> run <YYYY-MM-DD>
+description: Factory ran <TICKET-ID> on <YYYY-MM-DD> — PR opened successfully
+type: project
+---
+
+Factory ran ticket **<TICKET-ID>** on <YYYY-MM-DD>.
+
+**PR:** (pending — will be updated after push)
+**Files changed:**
+- <file1>
+- <file2>
+```
+
+### Step 9 — Secret scan (optional)
+
+If `gitleaks` is on PATH:
+```bash
+gitleaks detect --source . --log-opts HEAD~1..HEAD --no-banner
+```
+If it fires: `git reset --hard HEAD~1`, delete the branch, record secret-scan failure, continue.
+
+### Step 10 — Push and open PR
+
+```bash
+git push -u origin $BRANCH
+gh pr create \
+  --title "<ticket-id>: <ticket-title>" \
+  --body "## Acceptance Criteria
+
+<acceptance criteria text>
+
+---
+
+_Generated by ai\_factory_" \
+  --base <default_branch> \
+  --head $BRANCH
+```
+
+Capture the PR URL printed by `gh pr create`.
+
+### Step 11 — Record result
+
+```bash
+cd <ai_factory root>
+uv run factory record-result \
+  .factory/queue/<ticket-file> \
+  --pr-url "<pr_url>" \
+  --files "<comma-separated changed files>" \
+  --duration <elapsed seconds> \
+  --cost <cost if known, else omit>
+```
+
+This posts the PR URL as a Linear comment, transitions the issue to "In Review", writes a memory entry to the target repo, and moves the ticket to `.factory/queue/processed/`.
+
+On failure, call instead:
+```bash
+uv run factory record-result \
+  .factory/queue/<ticket-file> \
+  --failed \
+  --error "<reason>" \
+  --branch "<branch name if preserved>"
+```
+
+## Summary
+
+After all tickets are processed, print:
+
+```
+Run complete: N succeeded, M failed.
+  ✓ THM-5  → https://github.com/.../pull/8  (45s)
+  ✗ THM-14 → FAILED: tests failed — branch factory/thm-14-abc123 preserved
+```
+
+## Rules
+
+- **Never auto-merge.** Open the PR, stop.
+- **Never commit `.claude/memory/`.**
+- **Failures are isolated** — always continue to the next ticket.
+- **Respect scope_paths** — a scope violation is a hard stop for that ticket, not a warning.
+- **budget_minutes is a guide** — be efficient; if a ticket is taking far longer than its budget suggests, note it in the PR body.
