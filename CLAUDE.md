@@ -37,6 +37,10 @@
 4. **Do not commit `manifest.yaml`, `.env`, anything inside a target repo's `local_path`, or any credentials or tokens.**
 5. **When the right shape of a thing is unclear, read `docs/DECISIONS.md` first.** Many patterns that look like open questions have already been settled there.
 
+## Target repositories
+
+Projects that the factory manages live under `repos/`. Each project has its own `CLAUDE.md` and may have its own memory files. **Before doing any work related to a target project — including ideation, ticketing, or code changes — read that project's `CLAUDE.md` and any relevant memory files first.** Do not assume conventions from `ai_factory` apply to target projects.
+
 ## Skills
 
 Factory-level reusable skills live under `.claude/skills/`. See `.claude/skills/README.md` for the index and conventions. No skills are implemented in Phase 0.

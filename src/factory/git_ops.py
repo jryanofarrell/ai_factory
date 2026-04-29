@@ -18,6 +18,7 @@ class AgentResult:
     output: str | None = None
     timed_out: bool = False
     tokens_used: int | None = None
+    usage_limit_hit: bool = False
 
 
 def detect_install_command(local_path: Path) -> str | None:
@@ -195,6 +196,9 @@ def create_branch(local_path: Path, branch: str) -> None:
 def delete_branch(local_path: Path, branch: str, default_branch: str) -> None:
     subprocess.run(["git", "checkout", default_branch], cwd=local_path, capture_output=True)
     subprocess.run(["git", "branch", "-D", branch], cwd=local_path, capture_output=True)
+    # Restore working tree so the next ticket doesn't fail the dirty check
+    subprocess.run(["git", "restore", "."], cwd=local_path, capture_output=True)
+    subprocess.run(["git", "clean", "-fd"], cwd=local_path, capture_output=True)
 
 
 def undo_commit(local_path: Path) -> None:
@@ -210,7 +214,7 @@ def run_agent(
     # Token cap: claude CLI does not expose a --max-tokens flag for total context budget.
     # Token enforcement is therefore deferred to Phase 4+ tooling; only wall-clock time
     # is enforced here. Token usage is captured for reporting only (via --output-format json).
-    cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions"]
+    cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions", "--model", "claude-sonnet-4-6"]
     timeout_s = budget_minutes * 60 if budget_minutes else None
 
     if capture_cost:
@@ -241,6 +245,7 @@ def run_agent(
     duration_ms = None
     output = None
     tokens_used = None
+    usage_limit_hit = False
     if stdout:
         try:
             data = json.loads(stdout.strip())
@@ -253,6 +258,18 @@ def run_agent(
                 usage.get("output_tokens", 0) +
                 usage.get("cache_read_input_tokens", 0)
             )
+            # Detect Pro usage limit: is_error=true with a 429/529 status or
+            # error message containing usage/rate-limit keywords.
+            if data.get("is_error"):
+                api_status = data.get("api_error_status")
+                error_text = (output or "").lower()
+                usage_limit_hit = (
+                    api_status in (429, 529, 402)
+                    or "usage limit" in error_text
+                    or "rate limit" in error_text
+                    or "overloaded" in error_text
+                    or "exceeded" in error_text
+                )
             if output:
                 print(output)
         except json.JSONDecodeError:
@@ -265,6 +282,7 @@ def run_agent(
         duration_ms=duration_ms,
         output=output,
         tokens_used=tokens_used,
+        usage_limit_hit=usage_limit_hit,
     )
 
 
@@ -300,6 +318,51 @@ def create_pr(local_path: Path, title: str, body: str, base: str, head: str) -> 
             f"Branch '{head}' preserved. Re-run gh pr create manually."
         )
     return result.stdout.strip()
+
+
+def write_run_memory(local_path: Path, ticket_id: str, pr_url: str, files_changed: list[str], cost_usd: float | None, duration_s: float) -> None:
+    """Write a memory entry to the target repo's .claude/memory/ after a successful run."""
+    from datetime import datetime, timezone
+    memory_dir = local_path / ".claude" / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    file_name = f"{ticket_id.lower()}_{date_str}.md"
+    memory_path = memory_dir / file_name
+
+    cost_str = f"${cost_usd:.2f}" if cost_usd is not None else "n/a"
+    m, s = divmod(int(duration_s), 60)
+    dur_str = f"{m}m {s}s" if m else f"{s}s"
+    files_str = "\n".join(f"- {f}" for f in files_changed) if files_changed else "- (none recorded)"
+
+    content = f"""\
+---
+name: {ticket_id} run {date_str}
+description: Factory ran {ticket_id} on {date_str} — PR opened successfully
+type: project
+---
+
+Factory ran ticket **{ticket_id}** on {date_str}.
+
+**PR:** {pr_url}
+**Duration:** {dur_str} · **Cost:** {cost_str}
+
+**Files changed:**
+{files_str}
+
+**Why:** Ticket was marked Ready For AI in Linear and processed by ai_factory.
+"""
+    memory_path.write_text(content)
+
+    # Update or create MEMORY.md index
+    index_path = memory_dir / "MEMORY.md"
+    entry = f"- [{ticket_id} ({date_str})]({file_name}) — factory run, PR: {pr_url}"
+    if index_path.exists():
+        existing = index_path.read_text()
+        if file_name not in existing:
+            index_path.write_text(existing.rstrip() + "\n" + entry + "\n")
+    else:
+        index_path.write_text(f"# Run history\n\n{entry}\n")
 
 
 def secret_scan(local_path: Path) -> list[str]:

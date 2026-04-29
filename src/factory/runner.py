@@ -38,6 +38,7 @@ from .git_ops import (
     secret_scan,
     sync_repo,
     undo_commit,
+    write_run_memory,
 )
 from .manifest import RepoConfig, load_manifest
 from .ticket import Ticket, parse_ticket
@@ -58,6 +59,7 @@ class RunResult:
     tokens_used: int | None = None
     exit_code: int | None = None
     dry_run: bool = False
+    usage_limit_hit: bool = False
 
 
 def run_ticket(
@@ -104,6 +106,7 @@ def run_ticket(
         result.exit_code = agent.exit_code
         result.tokens_used = agent.tokens_used
         result.cost_usd = agent.cost_usd
+        result.usage_limit_hit = agent.usage_limit_hit
 
         if agent.timed_out:
             delete_branch(repo.local_path, branch, repo.default_branch)
@@ -160,6 +163,16 @@ def run_ticket(
                 result.error = f"Tests failed (exit {r.returncode})"
                 result.reason = "tests_failed"
                 return _finalise(result, start, started_at, log_dir)
+
+        # Write memory before commit so it lands in the PR and the repo permanently
+        write_run_memory(
+            local_path=repo.local_path,
+            ticket_id=ticket.id,
+            pr_url="(pending)",
+            files_changed=files_changed,
+            cost_usd=agent.cost_usd,
+            duration_s=_time.monotonic() - start,
+        )
 
         # Commit
         commit_msg = f"{ticket.id}: {ticket.title}"

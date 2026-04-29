@@ -116,6 +116,16 @@ def run(
 
         results.append(result)
 
+        if result.usage_limit_hit and manifest.stop_on_usage_limit:
+            typer.echo(
+                "\nClaude usage limit detected. Stopping after this ticket to avoid overage charges.\n"
+                "Set `stop_on_usage_limit: false` in manifest.yaml to disable this behaviour.",
+                err=True,
+            )
+            _save_batch(batch_file, batch)
+            _print_summary(results, batch_file, dry_run)
+            return
+
         record: dict = {"status": "dry_run" if dry_run else ("succeeded" if result.success else "failed")}
         record["duration_s"] = round(result.duration_s, 1)
         if result.pr_url:
