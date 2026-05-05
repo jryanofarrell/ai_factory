@@ -13,13 +13,12 @@ import json
 import traceback
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 
 from .git_ops import (
-    AgentResult,
     check_scope,
     check_tools,
     commit,
@@ -33,7 +32,6 @@ from .git_ops import (
     has_changes,
     is_dirty,
     push,
-    run_agent,
     run_shell_command,
     secret_scan,
     sync_repo,
@@ -41,6 +39,10 @@ from .git_ops import (
     write_run_memory,
 )
 from .manifest import RepoConfig, load_manifest
+from .providers import AgentResult
+from .providers import claude as claude_provider
+from .providers import codex as codex_provider
+from .quota_tracker import QuotaTracker
 from .ticket import Ticket, parse_ticket
 
 
@@ -60,6 +62,7 @@ class RunResult:
     exit_code: int | None = None
     dry_run: bool = False
     usage_limit_hit: bool = False
+    provider_used: str | None = None
 
 
 def run_ticket(
@@ -68,11 +71,15 @@ def run_ticket(
     capture_cost: bool = False,
     dry_run: bool = False,
     log_dir: Path | None = None,
+    quota_tracker: QuotaTracker | None = None,
+    executor_providers: list[str] | None = None,
+    max_utilization: float = 0.90,
 ) -> RunResult:
     """Core single-ticket pipeline."""
     import time as _time
 
-    check_tools()
+    _providers = executor_providers or ["claude"]
+    check_tools(providers=_providers)
 
     if repo.local_path.exists() and is_dirty(repo.local_path):
         raise RuntimeError(
@@ -85,7 +92,7 @@ def run_ticket(
     branch = f"factory/{ticket.id.lower()}-{short_uuid}"
     create_branch(repo.local_path, branch)
 
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     start = _time.monotonic()
     files_changed: list[str] = []
 
@@ -97,16 +104,28 @@ def run_ticket(
     )
 
     try:
-        agent: AgentResult = run_agent(
+        agent = _run_with_fallback(
             repo.local_path,
             _build_prompt(ticket),
             capture_cost=capture_cost,
             budget_minutes=ticket.budget_minutes,
+            providers=_providers,
+            quota_tracker=quota_tracker,
+            max_utilization=max_utilization,
         )
         result.exit_code = agent.exit_code
         result.tokens_used = agent.tokens_used
         result.cost_usd = agent.cost_usd
         result.usage_limit_hit = agent.usage_limit_hit
+        result.provider_used = agent.provider
+
+        # All providers were quota-exhausted before any run started.
+        # Clean up the empty branch so the ticket stays queued for next session.
+        if agent.usage_limit_hit and agent.provider == "exhausted":
+            delete_branch(repo.local_path, branch, repo.default_branch)
+            result.branch = None
+            result.reason = "all_providers_quota_exhausted"
+            return _finalise(result, start, started_at, log_dir)
 
         if agent.timed_out:
             delete_branch(repo.local_path, branch, repo.default_branch)
@@ -118,7 +137,7 @@ def run_ticket(
         if agent.exit_code != 0:
             delete_branch(repo.local_path, branch, repo.default_branch)
             result.branch = None
-            result.error = f"Claude Code exited with code {agent.exit_code}"
+            result.error = f"Agent exited with code {agent.exit_code}"
             result.reason = "unknown"
             return _finalise(result, start, started_at, log_dir)
 
@@ -224,6 +243,86 @@ def run_ticket(
         return _finalise(result, start, started_at, log_dir)
 
 
+def _run_with_fallback(
+    local_path: Path,
+    prompt: str,
+    capture_cost: bool,
+    budget_minutes: float | None,
+    providers: list[str],
+    quota_tracker: QuotaTracker | None,
+    max_utilization: float = 0.90,
+) -> AgentResult:
+    """Try each provider in order, skipping quota-exhausted ones and falling back on quota hit.
+
+    For claude, fetches live 5-hour utilization from the API before starting — skips the
+    provider if utilization >= max_utilization (default 0.90 = 90%).
+    """
+    for name in providers:
+        if quota_tracker and not quota_tracker.is_available(name):
+            reset_msg = quota_tracker.format_reset_time(name)
+            typer.echo(f"  [{name}] quota exhausted — {reset_msg}, skipping.", err=True)
+            continue
+
+        # Pre-flight quota check (claude only — live header probe)
+        if name == "claude":
+            quota = claude_provider.fetch_quota()
+            if quota is not None:
+                pct = round(quota.utilization_5h * 100, 1)
+                reset_str = (
+                    quota.reset_5h.strftime("%H:%M UTC") if quota.reset_5h else "unknown"
+                )
+                typer.echo(f"  [claude] 5h quota: {pct}% used (resets {reset_str})")
+                if quota.utilization_5h >= max_utilization:
+                    typer.echo(
+                        f"  [claude] {pct}% >= {max_utilization*100:.0f}% threshold — skipping.",
+                        err=True,
+                    )
+                    if quota_tracker:
+                        quota_tracker.mark_exhausted("claude")
+                    continue
+            else:
+                typer.echo("  [claude] quota probe failed — proceeding without check.")
+
+        typer.echo(f"  Using executor: {name}")
+        if name == "claude":
+            agent = claude_provider.run(
+                local_path, prompt, capture_cost=capture_cost, budget_minutes=budget_minutes
+            )
+        elif name == "codex":
+            agent = codex_provider.run(
+                local_path, prompt, budget_minutes=budget_minutes
+            )
+        else:
+            typer.echo(f"  [{name}] unknown provider, skipping.", err=True)
+            continue
+
+        if agent.usage_limit_hit:
+            if quota_tracker:
+                quota_tracker.mark_exhausted(name)
+                reset_msg = quota_tracker.format_reset_time(name)
+                typer.echo(
+                    f"  [{name}] quota hit — marked exhausted ({reset_msg}). Trying next provider.",
+                    err=True,
+                )
+            else:
+                typer.echo(f"  [{name}] quota hit. Trying next provider.", err=True)
+            continue
+
+        return agent
+
+    # All providers exhausted — signal the caller to end the session gracefully.
+    # The ticket is NOT run; it stays in the queue for the next session.
+    status_parts = []
+    for name in providers:
+        if quota_tracker:
+            status_parts.append(f"{name}: {quota_tracker.format_reset_time(name)}")
+        else:
+            status_parts.append(name)
+    msg = "All executor providers are quota-exhausted. " + ", ".join(status_parts)
+    typer.echo(f"\n{msg}", err=True)
+    return AgentResult(exit_code=-1, usage_limit_hit=True, provider="exhausted")
+
+
 def _finalise(result: RunResult, start: float, started_at: datetime, log_dir: Path | None) -> RunResult:
     import time as _time
     result.duration_s = _time.monotonic() - start
@@ -233,7 +332,7 @@ def _finalise(result: RunResult, start: float, started_at: datetime, log_dir: Pa
 
 
 def _write_log(result: RunResult, started_at: datetime, log_dir: Path) -> None:
-    ended_at = datetime.now(timezone.utc)
+    ended_at = datetime.now(UTC)
     date_str = started_at.strftime("%Y-%m-%d")
     log_path = log_dir / date_str / f"{result.ticket_id.lower()}.json"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +359,7 @@ def _write_log(result: RunResult, started_at: datetime, log_dir: Path) -> None:
         "exit_code": result.exit_code,
         "error": result.error,
         "reason": result.reason,
+        "provider": result.provider_used,
     }
     log_path.write_text(json.dumps(entry, indent=2))
 

@@ -34,13 +34,30 @@ Resolve the repo's `local_path` from `manifest.yaml`.
 
 ```bash
 cd <local_path>
-git status --porcelain  # check cleanliness, ignoring .claude/
 git fetch origin
 git checkout <default_branch>
 git pull --ff-only
+# Clean any stale untracked .claude/memory/ files left from a previous run
+git clean -fd .claude/memory/ 2>/dev/null || true
+git status --porcelain
 ```
 
-If the working tree has non-`.claude/` changes, stop this ticket, report the dirty state, and continue to the next.
+Ensure the repo has a `.claude/settings.json` with `bypassPermissions` — Claude Code treats each git repo as its own project boundary, so the ai_factory settings don't carry over:
+
+```bash
+mkdir -p .claude
+cat > .claude/settings.json <<'EOF'
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  }
+}
+EOF
+```
+
+This file is gitignored (`.claude/settings.json` is local-only) so it won't pollute the repo.
+
+If the working tree has any changes (tracked or untracked, including `.claude/`), stop this ticket, report the dirty state, and continue to the next.
 
 ### Step 3 — Create a branch
 
@@ -52,9 +69,14 @@ git checkout -b $BRANCH
 
 Record the branch name — you'll need it for error reporting.
 
-### Step 4 — Implement the changes
+### Step 4 — Understand the codebase, then implement
 
-Read the acceptance criteria carefully. Make all necessary file changes using your Edit and Write tools, working inside `<local_path>`.
+Before writing any code, read the target repo's `CLAUDE.md` and explore the existing structure relevant to the ticket. Specifically:
+- Identify existing models, modules, and naming conventions that the ticket touches
+- Do not create a new module or model if one already exists for the same concept under a different name — extend the existing one
+- If the ticket mentions a domain concept (e.g. "vendor", "service provider"), check whether it already exists under another name (e.g. "contractor") before creating anything new
+
+Then read the acceptance criteria carefully and make all necessary file changes using your Edit and Write tools, working inside `<local_path>`.
 
 **Rules:**
 - Do not run `git commit` or `git push` yourself during this step.
@@ -107,7 +129,7 @@ Before committing, write the memory file so it gets committed into the PR and la
 mkdir -p .claude/memory
 ```
 
-Write `.claude/memory/<ticket-id-lower>_<YYYY-MM-DD>.md` using the standard memory format (see `.claude/skills/run/SKILL.md` memory format below), then update `.claude/memory/MEMORY.md` index.
+Write `.claude/memory/<ticket-id-lower>_<YYYY-MM-DD>.md` using the standard memory format below. **Do not touch `.claude/memory/MEMORY.md`** — it is rebuilt in a separate session PR after all tickets complete.
 
 Then commit everything including the memory file:
 
@@ -119,8 +141,8 @@ git commit -m "<ticket-id>: <ticket-title>"
 **Memory file format:**
 ```markdown
 ---
-name: <TICKET-ID> run <YYYY-MM-DD>
-description: Factory ran <TICKET-ID> on <YYYY-MM-DD> — PR opened successfully
+name: <short descriptive name of what was built, e.g. "AiSession data model">
+description: <one sentence describing the key architectural fact — what was added/changed and the most important decision, e.g. "AiSession stored as JSONB on Job; summary union discriminated by `intent` field">
 type: project
 ---
 
@@ -130,7 +152,13 @@ Factory ran ticket **<TICKET-ID>** on <YYYY-MM-DD>.
 **Files changed:**
 - <file1>
 - <file2>
+
+**Key decisions:**
+- <most important non-obvious architectural choice made during implementation>
+- <any naming conventions, field names, or patterns future work must follow>
 ```
+
+The `name` and `description` must describe **what was built**, not the fact that the factory ran. A future Claude session will use these to decide whether to load the file. "AiSession data model" is good; "THM-5 run 2026-04-28" is useless.
 
 ### Step 9 — Secret scan (optional)
 
@@ -182,6 +210,50 @@ uv run factory record-result \
   --branch "<branch name if preserved>"
 ```
 
+### Step 12 — Session memory PR (once, after all tickets)
+
+After all tickets have been processed, open one memory index PR per repo that had at least one successful ticket. This is the only place MEMORY.md is written.
+
+For each such repo:
+
+```bash
+cd <local_path>
+git checkout <default_branch>
+git pull --ff-only
+
+SHORT_UUID=$(python3 -c "import uuid; print(uuid.uuid4().hex[:8])")
+BRANCH="factory/memory-$(date +%Y-%m-%d)-${SHORT_UUID}"
+git checkout -b $BRANCH
+```
+
+Rebuild MEMORY.md by reading the `name` and `description` frontmatter from every `.md` file in `.claude/memory/` (excluding MEMORY.md itself), sorted alphabetically:
+
+```python
+# Pseudocode — implement inline or via a small script
+entries = []
+for f in sorted(glob(".claude/memory/*.md")):
+    if f == "MEMORY.md": continue
+    fm = parse_frontmatter(f)
+    if fm.get("name") and fm.get("description"):
+        entries.append(f"- [{fm['name']}]({filename}) — {fm['description']}")
+write(".claude/memory/MEMORY.md", "# Memory Index\n\n" + "\n".join(entries) + "\n")
+```
+
+If MEMORY.md has no changes, delete the branch and skip. Otherwise:
+
+```bash
+git add .claude/memory/MEMORY.md
+git commit -m "chore: rebuild memory index"
+git push -u origin $BRANCH
+gh pr create \
+  --title "chore: update memory index" \
+  --body "Rebuilds \`.claude/memory/MEMORY.md\` from individual memory files added this run session.
+
+_Generated by ai\_factory_" \
+  --base <default_branch> \
+  --head $BRANCH
+```
+
 ## Summary
 
 After all tickets are processed, print:
@@ -195,7 +267,6 @@ Run complete: N succeeded, M failed.
 ## Rules
 
 - **Never auto-merge.** Open the PR, stop.
-- **Never commit `.claude/memory/`.**
 - **Failures are isolated** — always continue to the next ticket.
 - **Respect scope_paths** — a scope violation is a hard stop for that ticket, not a warning.
 - **budget_minutes is a guide** — be efficient; if a ticket is taking far longer than its budget suggests, note it in the PR body.

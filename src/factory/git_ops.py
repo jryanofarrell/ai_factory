@@ -2,23 +2,10 @@ from __future__ import annotations
 
 import json
 import shutil
-import signal
 import subprocess
-import threading
 import time
-from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
-
-
-@dataclass
-class AgentResult:
-    exit_code: int
-    cost_usd: float | None = None
-    duration_ms: int | None = None
-    output: str | None = None
-    timed_out: bool = False
-    tokens_used: int | None = None
-    usage_limit_hit: bool = False
 
 
 def detect_install_command(local_path: Path) -> str | None:
@@ -65,8 +52,16 @@ def _makefile_has_target(local_path: Path, target: str) -> bool:
     return False
 
 
-def check_tools() -> None:
-    missing = [t for t in ("git", "gh", "claude") if not shutil.which(t)]
+def check_tools(providers: list[str] | None = None) -> None:
+    _PROVIDER_BINS = {"claude": "claude", "codex": "codex"}
+    _active = set(providers or ["claude"])
+    base = [t for t in ("git", "gh") if not shutil.which(t)]
+    provider_missing = [
+        f"{name} (install: npm install -g @openai/codex)" if name == "codex" else name
+        for name, binary in _PROVIDER_BINS.items()
+        if name in _active and not shutil.which(binary)
+    ]
+    missing = base + provider_missing
     if missing:
         raise RuntimeError(
             f"Missing required tool(s): {', '.join(missing)}. "
@@ -205,87 +200,6 @@ def undo_commit(local_path: Path) -> None:
     subprocess.run(["git", "reset", "--hard", "HEAD~1"], cwd=local_path, capture_output=True)
 
 
-def run_agent(
-    local_path: Path,
-    prompt: str,
-    capture_cost: bool = False,
-    budget_minutes: float | None = None,
-) -> AgentResult:
-    # Token cap: claude CLI does not expose a --max-tokens flag for total context budget.
-    # Token enforcement is therefore deferred to Phase 4+ tooling; only wall-clock time
-    # is enforced here. Token usage is captured for reporting only (via --output-format json).
-    cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions", "--model", "claude-sonnet-4-6"]
-    timeout_s = budget_minutes * 60 if budget_minutes else None
-
-    if capture_cost:
-        print("$ claude -p <prompt> --dangerously-skip-permissions --output-format json")
-        cmd += ["--output-format", "json"]
-        proc = subprocess.Popen(cmd, cwd=local_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    else:
-        print("$ claude -p <prompt> --dangerously-skip-permissions")
-        proc = subprocess.Popen(cmd, cwd=local_path)
-
-    timed_out = False
-    try:
-        stdout, _ = proc.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        proc.send_signal(signal.SIGTERM)
-        try:
-            proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-        return AgentResult(exit_code=-1, timed_out=True)
-
-    if not capture_cost:
-        return AgentResult(exit_code=proc.returncode)
-
-    cost_usd = None
-    duration_ms = None
-    output = None
-    tokens_used = None
-    usage_limit_hit = False
-    if stdout:
-        try:
-            data = json.loads(stdout.strip())
-            cost_usd = data.get("total_cost_usd")
-            duration_ms = data.get("duration_ms")
-            output = data.get("result")
-            usage = data.get("usage", {})
-            tokens_used = (
-                usage.get("input_tokens", 0) +
-                usage.get("output_tokens", 0) +
-                usage.get("cache_read_input_tokens", 0)
-            )
-            # Detect Pro usage limit: is_error=true with a 429/529 status or
-            # error message containing usage/rate-limit keywords.
-            if data.get("is_error"):
-                api_status = data.get("api_error_status")
-                error_text = (output or "").lower()
-                usage_limit_hit = (
-                    api_status in (429, 529, 402)
-                    or "usage limit" in error_text
-                    or "rate limit" in error_text
-                    or "overloaded" in error_text
-                    or "exceeded" in error_text
-                )
-            if output:
-                print(output)
-        except json.JSONDecodeError:
-            output = stdout
-            print(output)
-
-    return AgentResult(
-        exit_code=proc.returncode,
-        cost_usd=cost_usd,
-        duration_ms=duration_ms,
-        output=output,
-        tokens_used=tokens_used,
-        usage_limit_hit=usage_limit_hit,
-    )
-
-
 def run_shell_command(cmd: str, cwd: Path) -> subprocess.CompletedProcess:
     print(f"$ {cmd}")
     return subprocess.run(cmd, shell=True, cwd=cwd)  # noqa: S602
@@ -322,11 +236,11 @@ def create_pr(local_path: Path, title: str, body: str, base: str, head: str) -> 
 
 def write_run_memory(local_path: Path, ticket_id: str, pr_url: str, files_changed: list[str], cost_usd: float | None, duration_s: float) -> None:
     """Write a memory entry to the target repo's .claude/memory/ after a successful run."""
-    from datetime import datetime, timezone
+    from datetime import datetime
     memory_dir = local_path / ".claude" / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
 
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
     file_name = f"{ticket_id.lower()}_{date_str}.md"
     memory_path = memory_dir / file_name
 
@@ -354,15 +268,64 @@ Factory ran ticket **{ticket_id}** on {date_str}.
 """
     memory_path.write_text(content)
 
-    # Update or create MEMORY.md index
-    index_path = memory_dir / "MEMORY.md"
-    entry = f"- [{ticket_id} ({date_str})]({file_name}) — factory run, PR: {pr_url}"
-    if index_path.exists():
-        existing = index_path.read_text()
-        if file_name not in existing:
-            index_path.write_text(existing.rstrip() + "\n" + entry + "\n")
-    else:
-        index_path.write_text(f"# Run history\n\n{entry}\n")
+
+def _parse_frontmatter(content: str) -> dict:
+    if not content.startswith("---"):
+        return {}
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    try:
+        import yaml
+        return yaml.safe_load(parts[1]) or {}
+    except Exception:
+        return {}
+
+
+def rebuild_memory_index(local_path: Path) -> None:
+    """Rebuild .claude/memory/MEMORY.md from individual memory file frontmatter."""
+    memory_dir = local_path / ".claude" / "memory"
+    if not memory_dir.exists():
+        return
+    entries = []
+    for md_file in sorted(memory_dir.glob("*.md")):
+        if md_file.name == "MEMORY.md":
+            continue
+        fm = _parse_frontmatter(md_file.read_text())
+        name = fm.get("name")
+        description = fm.get("description")
+        if name and description:
+            entries.append(f"- [{name}]({md_file.name}) — {description}")
+    if not entries:
+        return
+    (memory_dir / "MEMORY.md").write_text("# Memory Index\n\n" + "\n".join(entries) + "\n")
+
+
+def create_memory_pr(local_path: Path, default_branch: str, github: str) -> str | None:
+    """Rebuild MEMORY.md and open a session memory PR. Returns PR URL or None if no changes."""
+    import uuid
+    from datetime import datetime
+
+    sync_repo(local_path, github, default_branch)
+    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    branch = f"factory/memory-{date_str}-{uuid.uuid4().hex[:8]}"
+    create_branch(local_path, branch)
+    rebuild_memory_index(local_path)
+    if not has_changes(local_path):
+        delete_branch(local_path, branch, default_branch)
+        return None
+    commit(local_path, "chore: rebuild memory index")
+    push(local_path, branch)
+    return create_pr(
+        local_path,
+        title="chore: update memory index",
+        body=(
+            "Rebuilds `.claude/memory/MEMORY.md` from individual memory files "
+            "added during this run session.\n\n_Generated by ai\\_factory_"
+        ),
+        base=default_branch,
+        head=branch,
+    )
 
 
 def secret_scan(local_path: Path) -> list[str]:
