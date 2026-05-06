@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import json
 import signal
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 
-from .git_ops import cleanup_stale_branches
+from .git_ops import cleanup_stale_branches, create_memory_pr
 from .linear import LinearClient, LinearError
 from .manifest import load_manifest
+from .quota_tracker import QuotaTracker
 from .runner import RunResult, run_ticket
 from .sync import pull_tickets
 from .ticket import parse_ticket
@@ -34,6 +34,17 @@ def run(
     runs_dir = base_dir / ".factory" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     log_dir = base_dir / "logs"
+
+    quota_tracker = QuotaTracker(
+        state_file=base_dir / ".factory" / "quota_state.json",
+        reset_hours=manifest.quota_reset_hours or None,
+    )
+
+    providers = manifest.executor_providers
+    if len(providers) > 1:
+        typer.echo(f"Executor providers (in order): {', '.join(providers)}")
+    else:
+        typer.echo(f"Executor provider: {providers[0]}")
 
     # Step 1: branch hygiene
     if not no_cleanup:
@@ -68,7 +79,7 @@ def run(
         return
 
     # Step 4: batch state
-    batch_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    batch_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     batch_file = runs_dir / f"{batch_ts}.json"
     batch: dict = {"started_at": batch_ts, "tickets": {}}
 
@@ -84,6 +95,7 @@ def run(
     signal.signal(signal.SIGINT, _handle_sigint)
 
     results: list[RunResult] = []
+    successful_repos: set[str] = set()
 
     # Step 5: process each ticket
     for ticket_file in ticket_files:
@@ -108,7 +120,16 @@ def run(
         typer.echo(f"{'─'*60}")
 
         try:
-            result = run_ticket(ticket, repo, capture_cost=True, dry_run=dry_run, log_dir=log_dir)
+            result = run_ticket(
+                ticket,
+                repo,
+                capture_cost=True,
+                dry_run=dry_run,
+                log_dir=log_dir,
+                quota_tracker=quota_tracker,
+                executor_providers=providers,
+                max_utilization=manifest.max_utilization,
+            )
         except KeyboardInterrupt:
             batch["tickets"][ticket.id] = {"status": "interrupted"}
             _save_batch(batch_file, batch)
@@ -143,10 +164,29 @@ def run(
             _write_back(client, ticket, team_key, result)
 
         if result.success and not dry_run:
+            successful_repos.add(ticket.target_repo)
             processed_dir.mkdir(parents=True, exist_ok=True)
             ticket_file.rename(processed_dir / ticket_file.name)
 
+    _push_memory_prs(manifest, successful_repos, dry_run)
     _print_summary(results, batch_file, dry_run)
+
+
+def _push_memory_prs(manifest, successful_repos: set[str], dry_run: bool) -> None:
+    if dry_run or not successful_repos:
+        return
+    typer.echo(f"\n{'─'*60}")
+    typer.echo("Opening memory index PR(s)...")
+    for repo_key in successful_repos:
+        repo = manifest.repos[repo_key]
+        try:
+            pr_url = create_memory_pr(repo.local_path, repo.default_branch, repo.github)
+            if pr_url:
+                typer.echo(f"  {repo_key}: memory PR → {pr_url}")
+            else:
+                typer.echo(f"  {repo_key}: memory index unchanged, no PR needed")
+        except Exception as e:
+            typer.echo(f"  Warning: memory PR failed for {repo_key}: {e}", err=True)
 
 
 def _write_back(client: LinearClient, ticket, team_key: str, result: RunResult) -> None:

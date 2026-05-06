@@ -2,23 +2,10 @@ from __future__ import annotations
 
 import json
 import shutil
-import signal
 import subprocess
-import threading
 import time
-from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
-
-
-@dataclass
-class AgentResult:
-    exit_code: int
-    cost_usd: float | None = None
-    duration_ms: int | None = None
-    output: str | None = None
-    timed_out: bool = False
-    tokens_used: int | None = None
-    usage_limit_hit: bool = False
 
 
 def detect_install_command(local_path: Path) -> str | None:
@@ -65,8 +52,16 @@ def _makefile_has_target(local_path: Path, target: str) -> bool:
     return False
 
 
-def check_tools() -> None:
-    missing = [t for t in ("git", "gh", "claude") if not shutil.which(t)]
+def check_tools(providers: list[str] | None = None) -> None:
+    _PROVIDER_BINS = {"claude": "claude", "codex": "codex"}
+    _active = set(providers or ["claude"])
+    base = [t for t in ("git", "gh") if not shutil.which(t)]
+    provider_missing = [
+        f"{name} (install: npm install -g @openai/codex)" if name == "codex" else name
+        for name, binary in _PROVIDER_BINS.items()
+        if name in _active and not shutil.which(binary)
+    ]
+    missing = base + provider_missing
     if missing:
         raise RuntimeError(
             f"Missing required tool(s): {', '.join(missing)}. "
