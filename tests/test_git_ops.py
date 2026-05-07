@@ -1,12 +1,14 @@
 import subprocess
 from pathlib import Path
-import pytest
+
 from factory.git_ops import check_scope, get_changed_files
 
 
 def _make_git_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True
+    )
     subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
     # Initial commit so HEAD exists
     (tmp_path / "README.md").write_text("readme")

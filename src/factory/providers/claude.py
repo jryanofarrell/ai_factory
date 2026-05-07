@@ -25,11 +25,11 @@ _PROBE_URL = "https://api.anthropic.com/v1/messages"
 
 @dataclass
 class QuotaInfo:
-    utilization_5h: float        # 0.0–1.0  (matches "X% used" in claude.ai UI)
-    utilization_7d: float        # 0.0–1.0
-    utilization_overage: float   # 0.0–1.0  (paid-credit overage bucket)
-    reset_5h: datetime | None    # when the 5-hour window resets
-    status: str                  # "allowed", "rate_limited", etc.
+    utilization_5h: float  # 0.0–1.0  (matches "X% used" in claude.ai UI)
+    utilization_7d: float  # 0.0–1.0
+    utilization_overage: float  # 0.0–1.0  (paid-credit overage bucket)
+    reset_5h: datetime | None  # when the 5-hour window resets
+    status: str  # "allowed", "rate_limited", etc.
     raw_headers: dict[str, str]
 
 
@@ -43,11 +43,13 @@ def fetch_quota() -> QuotaInfo | None:
     if not token:
         return None
 
-    body = json.dumps({
-        "model": _PROBE_MODEL,
-        "max_tokens": 1,
-        "messages": [{"role": "user", "content": "hi"}],
-    }).encode()
+    body = json.dumps(
+        {
+            "model": _PROBE_MODEL,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+    ).encode()
 
     req = urllib.request.Request(
         _PROBE_URL,
@@ -101,7 +103,9 @@ def _read_oauth_token() -> str | None:
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode != 0:
             return None

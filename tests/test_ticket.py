@@ -1,6 +1,8 @@
-import pytest
 from pathlib import Path
-from factory.ticket import parse_ticket, Ticket
+
+import pytest
+
+from factory.ticket import parse_ticket
 
 VALID_TICKET = """\
 ---
@@ -94,6 +96,8 @@ target_repo: my-repo
 
 
 def test_notes_optional(tmp_path: Path) -> None:
-    no_notes = VALID_TICKET.replace("\n## Notes\n\nThis is a hello-world ticket to verify the executor pipeline works.\n", "")
+    no_notes = VALID_TICKET.replace(
+        "\n## Notes\n\nThis is a hello-world ticket to verify the executor pipeline works.\n", ""
+    )
     t = parse_ticket(write(tmp_path, no_notes))
     assert t.notes == ""

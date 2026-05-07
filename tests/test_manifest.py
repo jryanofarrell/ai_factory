@@ -1,6 +1,8 @@
-import pytest
 from pathlib import Path
-from factory.manifest import load_manifest, Manifest, RepoConfig
+
+import pytest
+
+from factory.manifest import load_manifest
 
 VALID_MANIFEST = """\
 version: 1

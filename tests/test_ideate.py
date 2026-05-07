@@ -1,7 +1,8 @@
 import json
+
 import pytest
-from unittest.mock import patch, MagicMock
-from factory.ideate import _parse_result, _build_description, IdeateResult
+
+from factory.ideate import IdeateResult, _build_description, _parse_result
 
 VALID_JSON = {
     "title": "Add CHANGELOG entry",
@@ -56,7 +57,11 @@ def test_build_description_embeds_scope_paths():
 def test_build_description_no_duplicate_sections():
     result = IdeateResult(
         title="t",
-        description_markdown="## Acceptance Criteria\n\n- done\n\n## Scope Paths\n\nCHANGELOG.md\n\n## Target Repo\n\nthms-platform",
+        description_markdown=(
+            "## Acceptance Criteria\n\n- done\n\n"
+            "## Scope Paths\n\nCHANGELOG.md\n\n"
+            "## Target Repo\n\nthms-platform"
+        ),
         scope_paths=["CHANGELOG.md"],
     )
     desc = _build_description(result, "thms-platform")
@@ -67,6 +72,7 @@ def test_build_description_no_duplicate_sections():
 def test_create_issue_refuses_ready_for_agent_state():
     """Regression: ideation must never create issues in the Ready for Agent state."""
     from factory.linear import LinearClient
+
     client = LinearClient("fake-key")
     # A state_id that happens to contain 'ready' should be blocked
     with pytest.raises(ValueError, match="Ready for Agent"):
@@ -80,5 +86,6 @@ def test_create_issue_refuses_ready_for_agent_state():
 
 def test_ideate_errors_on_empty_brain_dump():
     from factory.ideate import ideate
+
     with pytest.raises(ValueError, match="empty"):
         ideate(brain_dump="   ", repo_key="thms-platform", yes=True, api_key="key")

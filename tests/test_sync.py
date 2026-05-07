@@ -1,7 +1,9 @@
-import pytest
-from factory.manifest import Manifest, RepoConfig
-from factory.sync import _issue_to_ticket, _hash
 from pathlib import Path
+
+import pytest
+
+from factory.manifest import Manifest, RepoConfig
+from factory.sync import _hash, _issue_to_ticket
 
 # Fixture capturing real Linear API response shape (from Phase 2 spike)
 FIXTURE_ISSUE = {
@@ -10,7 +12,7 @@ FIXTURE_ISSUE = {
     "description": (
         "## Acceptance Criteria\n\n"
         "- GET /health returns 200\n"
-        "- Response body is `{\"status\": \"ok\"}`\n\n"
+        '- Response body is `{"status": "ok"}`\n\n'
         "## Scope Paths\n\n"
         "apps/api/src/**\n\n"
         "## Budget\n\n"
@@ -52,7 +54,10 @@ def test_happy_path():
 
 
 def test_target_repo_override():
-    issue = {**FIXTURE_ISSUE, "description": "## Acceptance Criteria\n\n- done\n\n## Target Repo\n\nthms-platform"}
+    issue = {
+        **FIXTURE_ISSUE,
+        "description": "## Acceptance Criteria\n\n- done\n\n## Target Repo\n\nthms-platform",
+    }
     ticket = _issue_to_ticket(issue, MANIFEST, "wrong-default")
     assert ticket.target_repo == "thms-platform"
 
@@ -87,6 +92,7 @@ def test_scope_paths_strips_comments_and_blanks():
 
 def test_to_markdown_round_trips(tmp_path):
     from factory.ticket import parse_ticket
+
     ticket = _issue_to_ticket(FIXTURE_ISSUE, MANIFEST, "thms-platform")
     md = ticket.to_markdown()
     p = tmp_path / "ticket.md"
