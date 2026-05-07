@@ -106,7 +106,7 @@ def run_ticket(
     try:
         agent = _run_with_fallback(
             repo.local_path,
-            _build_prompt(ticket),
+            _build_prompt(ticket, repo.local_path),
             capture_cost=capture_cost,
             budget_minutes=ticket.budget_minutes,
             providers=_providers,
@@ -183,15 +183,20 @@ def run_ticket(
                 result.reason = "tests_failed"
                 return _finalise(result, start, started_at, log_dir)
 
-        # Write memory before commit so it lands in the PR and the repo permanently
-        write_run_memory(
-            local_path=repo.local_path,
-            ticket_id=ticket.id,
-            pr_url="(pending)",
-            files_changed=files_changed,
-            cost_usd=agent.cost_usd,
-            duration_s=_time.monotonic() - start,
-        )
+        # Memory file: Claude writes it as part of its task (see _build_prompt).
+        # Fall back to the generic writer only if Claude forgot.
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        memory_file = repo.local_path / ".claude" / "memory" / f"{ticket.id.lower()}_{today}.md"
+        if not memory_file.exists():
+            typer.echo("  Note: Claude did not write a memory file — using generic fallback.", err=True)
+            write_run_memory(
+                local_path=repo.local_path,
+                ticket_id=ticket.id,
+                pr_url="(pending)",
+                files_changed=files_changed,
+                cost_usd=agent.cost_usd,
+                duration_s=_time.monotonic() - start,
+            )
 
         # Commit
         commit_msg = f"{ticket.id}: {ticket.title}"
@@ -391,8 +396,45 @@ def run_ticket_from_file(
     return run_ticket(ticket, repo, capture_cost=False, dry_run=dry_run, log_dir=log_dir)
 
 
-def _build_prompt(ticket: Ticket) -> str:
-    parts = [
+def _load_repo_rules(repo_path: Path) -> str:
+    """Read all .ai/rules/*.md files from the repo and return combined text.
+
+    Injected directly into the prompt so rules are enforced even in non-interactive
+    -p mode, where Claude may not proactively open files referenced in CLAUDE.md.
+    """
+    rules_dir = repo_path / ".ai" / "rules"
+    if not rules_dir.exists():
+        return ""
+    sections = []
+    for rules_file in sorted(rules_dir.glob("*.md")):
+        try:
+            content = rules_file.read_text().strip()
+            if content:
+                sections.append(content)
+        except OSError:
+            pass
+    return "\n\n".join(sections)
+
+
+def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    memory_path = f".claude/memory/{ticket.id.lower()}_{today}.md"
+
+    rules = _load_repo_rules(repo_path)
+    preamble = []
+    if rules:
+        preamble = [
+            "## Project Rules",
+            "",
+            "These rules always apply. Follow them exactly.",
+            "",
+            rules,
+            "",
+            "---",
+            "",
+        ]
+
+    parts = preamble + [
         "You are working on a task described by the following ticket.",
         "",
         f"Ticket ID: {ticket.id}",
@@ -411,9 +453,49 @@ def _build_prompt(ticket: Ticket) -> str:
         "",
         "---",
         "",
+        "## Before writing any code",
+        "",
+        "1. List the contents of `.ai/skills/` to see what guidance is available.",
+        "2. Read every skill file that is relevant to this task. For example:",
+        "   - Adding or modifying a route → read `permissioning.md`",
+        "   - Writing or modifying tests → read `testing.md`",
+        "   - Adding a new API module → read `new-api-module.md` and `api-file-structure.md`",
+        "   - Adding a new web page → read `new-web-page.md`",
+        "   When in doubt, read the skill file. They encode repo-specific conventions that",
+        "   override general patterns you may already know.",
+        "3. Then implement the changes.",
+        "",
+        "## Implementation",
+        "",
         "Make the necessary changes to satisfy the acceptance criteria.",
         "Do NOT run git commit. Do NOT run git push. Only edit files.",
-        "When you are done, stop.",
+        "",
+        f"When you are done, write a memory file at `{memory_path}` using this exact format:",
+        "",
+        "```",
+        "---",
+        "name: <short descriptive name of what was built — NOT the ticket ID>",
+        "description: <one sentence: what was added/changed and the key decision or pattern>",
+        "type: project",
+        "---",
+        "",
+        f"Factory ran ticket **{ticket.id}** on {today}.",
+        "",
+        "**PR:** (pending)",
+        "**Files changed:**",
+        "- <list key files modified>",
+        "",
+        "**Key decisions:**",
+        "- <most important non-obvious architectural choice>",
+        "```",
+        "",
+        "The name and description must describe WHAT WAS BUILT, not the ticket ID.",
+        "Good: `name: Contractor detail page` / `description: GET /contractors/:id route + detail page with job history table`",
+        f"Bad:  `name: {ticket.id} run {today}` / `description: Factory ran {ticket.id}`",
+        "",
+        "Do NOT touch `.claude/memory/MEMORY.md` — that file is managed separately after all tickets complete.",
+        "",
+        "Then stop.",
     ]
     return "\n".join(parts)
 
