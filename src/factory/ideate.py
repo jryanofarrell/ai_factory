@@ -17,18 +17,18 @@ import json
 import os
 import re
 import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .linear import LinearClient, LinearError
+from .linear import LinearClient
 from .manifest import load_manifest
 
 MODEL = "claude-sonnet-4-6"
 
 PROMPT_TEMPLATE = """\
-You are a technical project manager helping a developer turn a brain dump into a structured Linear ticket.
+You are a technical project manager helping a developer turn a brain dump into a
+structured Linear ticket.
 
 ## Repo context
 {repo_metadata}
@@ -48,7 +48,9 @@ Produce a single JSON object (no markdown fences, no other text) with exactly th
 
 {{
   "title": "<short imperative title, max 70 chars>",
-  "description_markdown": "<full markdown description with sections: ## Acceptance Criteria (required, bulleted, testable), ## Scope Paths (optional, one glob per line), ## Budget (optional, tokens: N / minutes: N), ## Notes (optional)>",
+  "description_markdown": "<full markdown description with sections: ## Acceptance Criteria
+  (required, bulleted, testable), ## Scope Paths (optional, one glob per line),
+  ## Budget (optional, tokens: N / minutes: N), ## Notes (optional)>",
   "scope_paths": ["<glob>", ...],
   "budget_tokens": <integer, default 10000 for small tasks>,
   "budget_minutes": <integer, default 5 for small tasks>,
@@ -58,11 +60,22 @@ Produce a single JSON object (no markdown fences, no other text) with exactly th
 Rules:
 - Acceptance criteria must be testable and specific.
 - scope_paths should be the smallest plausible set of files.
-- budget_tokens / budget_minutes should reflect task complexity (small: 10000/5, medium: 30000/15, large: 50000/30).
+- budget_tokens / budget_minutes should reflect task complexity
+  (small: 10000/5, medium: 30000/15, large: 50000/30).
 - Output ONLY the JSON object. No prose before or after.
 
 ## One-shot example output
-{{"title": "Add CHANGELOG entry for v1.0 release", "description_markdown": "## Acceptance Criteria\\n\\n- A new entry is added to `CHANGELOG.md` under an \\"Unreleased\\" section.\\n- The entry reads \\"Initial v1.0 release\\".\\n- No other files are modified.", "scope_paths": ["CHANGELOG.md"], "budget_tokens": 10000, "budget_minutes": 5, "rationale": "Single-file change with a clear, verifiable criterion. Minimal scope and budget."}}
+{{
+  "title": "Add CHANGELOG entry for v1.0 release",
+  "description_markdown": "## Acceptance Criteria\\n\\n- A new entry is added to
+  `CHANGELOG.md` under an \\"Unreleased\\" section.\\n- The entry reads
+  \\"Initial v1.0 release\\".\\n- No other files are modified.",
+  "scope_paths": ["CHANGELOG.md"],
+  "budget_tokens": 10000,
+  "budget_minutes": 5,
+  "rationale": "Single-file change with a clear, verifiable criterion. Minimal scope
+  and budget."
+}}
 """
 
 
@@ -125,7 +138,9 @@ def ideate(
     else:
         repo_claude_md = "(no CLAUDE.md found)"
 
-    linear_schema_path = (manifest_path or Path("manifest.yaml")).resolve().parent / "docs" / "LINEAR_SCHEMA.md"
+    linear_schema_path = (
+        (manifest_path or Path("manifest.yaml")).resolve().parent / "docs" / "LINEAR_SCHEMA.md"
+    )
     linear_schema = linear_schema_path.read_text() if linear_schema_path.exists() else ""
 
     # Call model
@@ -144,9 +159,7 @@ def ideate(
 
     # Create Linear issue
     if api_key is None:
-        raise ValueError(
-            "LINEAR_API_KEY is not set. Add it to .env."
-        )
+        raise ValueError("LINEAR_API_KEY is not set. Add it to .env.")
     client = LinearClient(api_key)
     team_key = repo.linear_team or repo_key.upper()
 
@@ -213,7 +226,14 @@ def _call_model(
                 f"Previous (bad) response: {raw_text[:500]}"
             )
             proc2 = subprocess.run(
-                ["claude", "-p", retry_prompt, "--dangerously-skip-permissions", "--output-format", "json"],
+                [
+                    "claude",
+                    "-p",
+                    retry_prompt,
+                    "--dangerously-skip-permissions",
+                    "--output-format",
+                    "json",
+                ],
                 capture_output=True,
                 text=True,
             )
@@ -257,7 +277,7 @@ def _confirm(result: IdeateResult) -> IdeateResult | None:
     print(f"Title:         {result.title}")
     print(f"Scope paths:   {', '.join(result.scope_paths) or '(none)'}")
     print(f"Budget:        {result.budget_tokens} tokens / {result.budget_minutes} min")
-    print(f"\nAcceptance criteria (from description):")
+    print("\nAcceptance criteria (from description):")
     for line in result.description_markdown.splitlines():
         if line.strip().startswith("-"):
             print(f"  {line.strip()}")

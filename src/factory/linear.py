@@ -122,7 +122,9 @@ class LinearClient:
         }
 
     def get_ready_issues(self, team_key: str) -> list[dict[str, Any]]:
-        data = self._query(ISSUES_QUERY, {"teamKey": team_key, "labelName": READY_LABEL, "stateName": READY_STATE})
+        data = self._query(
+            ISSUES_QUERY, {"teamKey": team_key, "labelName": READY_LABEL, "stateName": READY_STATE}
+        )
         return data["issues"]["nodes"]
 
     def comment_on_issue(self, issue_id: str, body: str) -> None:
@@ -144,13 +146,16 @@ class LinearClient:
         return nodes[0]["id"] if nodes else None
 
     def get_team_id(self, team_key: str) -> str | None:
-        data = self._query("""
+        data = self._query(
+            """
         query($teamKey: String!) {
           teams(filter: { key: { eq: $teamKey } }) {
             nodes { id key }
           }
         }
-        """, {"teamKey": team_key})
+        """,
+            {"teamKey": team_key},
+        )
         nodes = data.get("teams", {}).get("nodes", [])
         return nodes[0]["id"] if nodes else None
 
@@ -164,7 +169,8 @@ class LinearClient:
         # Safety: refuse to create directly in "Ready for Agent" state (ADR-006 + Phase 5 rule)
         if state_id and "ready" in state_id.lower():
             raise ValueError("create_issue: state_id must not be the Ready for Agent state")
-        data = self._query("""
+        data = self._query(
+            """
         mutation($teamId: String!, $title: String!, $description: String!, $stateId: String!) {
           issueCreate(input: {
             teamId: $teamId
@@ -176,7 +182,9 @@ class LinearClient:
             issue { id identifier url }
           }
         }
-        """, {"teamId": team_id, "title": title, "description": description, "stateId": state_id})
+        """,
+            {"teamId": team_id, "title": title, "description": description, "stateId": state_id},
+        )
         return data["issueCreate"]["issue"]
 
     def get_issue_by_identifier(self, identifier: str) -> dict[str, Any] | None:
@@ -224,7 +232,7 @@ class LinearClient:
 
         if resp.status_code >= 500:
             if attempt < 3:
-                wait = 2 ** attempt
+                wait = 2**attempt
                 print(f"Linear API {resp.status_code} — retrying in {wait}s...")
                 time.sleep(wait)
                 return self._query(query, variables, attempt + 1)

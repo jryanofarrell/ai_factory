@@ -23,28 +23,23 @@ _QUOTA_KEYWORDS = (
 
 
 def _load_ai_context(local_path: Path) -> str:
-    """Read .ai/rules/ and .ai/context/ from the repo and return combined text.
+    """Read only hard rules for Codex.
 
-    This gives Codex the same project context Claude gets from reading CLAUDE.md
-    and memory files automatically. Returns empty string if .ai/ doesn't exist.
+    Broader context and skills are intentionally loaded on demand by the executor
+    prompt so fallback runs do not spend quota on unrelated repo documentation.
     """
-    ai_dir = local_path / ".ai"
-    if not ai_dir.exists():
+    rules_dir = local_path / ".ai" / "rules"
+    if not rules_dir.exists():
         return ""
 
     sections: list[str] = []
-
-    for subdir in ("rules", "context"):
-        folder = ai_dir / subdir
-        if not folder.exists():
-            continue
-        for md_file in sorted(folder.rglob("*.md")):
-            try:
-                content = md_file.read_text().strip()
-                if content:
-                    sections.append(f"--- {md_file.relative_to(local_path)} ---\n{content}")
-            except OSError:
-                pass
+    for md_file in sorted(rules_dir.rglob("*.md")):
+        try:
+            content = md_file.read_text().strip()
+            if content:
+                sections.append(f"--- {md_file.relative_to(local_path)} ---\n{content}")
+        except OSError:
+            pass
 
     return "\n\n".join(sections)
 
@@ -63,7 +58,8 @@ def run(
         "exec",
         "--dangerously-bypass-approvals-and-sandbox",
         "--json",
-        "-C", str(local_path),
+        "-C",
+        str(local_path),
     ]
     if model:
         cmd += ["-m", model]
@@ -71,8 +67,10 @@ def run(
 
     timeout_s = budget_minutes * 60 if budget_minutes else None
 
-    print("$ codex exec --dangerously-bypass-approvals-and-sandbox --json -C <repo> <prompt>"
-          + (f" (timeout {int(timeout_s)}s)" if timeout_s else ""))
+    print(
+        "$ codex exec --dangerously-bypass-approvals-and-sandbox --json -C <repo> <prompt>"
+        + (f" (timeout {int(timeout_s)}s)" if timeout_s else "")
+    )
 
     proc = subprocess.Popen(
         cmd,

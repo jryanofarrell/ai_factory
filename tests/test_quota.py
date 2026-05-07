@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from factory.providers.base import AgentResult
 from factory.providers.claude import QuotaInfo
 from factory.quota_tracker import QuotaTracker
 from factory.runner import _run_with_fallback
-
 
 # ---------------------------------------------------------------------------
 # QuotaTracker

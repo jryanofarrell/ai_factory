@@ -63,8 +63,7 @@ def run(
     if not no_pull:
         if api_key is None:
             raise ValueError(
-                "LINEAR_API_KEY is not set. Add it to .env to enable pull. "
-                "Use --no-pull to skip."
+                "LINEAR_API_KEY is not set. Add it to .env to enable pull. Use --no-pull to skip."
             )
         typer.echo("Pulling tickets from Linear...")
         pull_tickets(manifest_path=manifest_path, api_key=api_key)
@@ -111,15 +110,17 @@ def run(
             continue
 
         if ticket.target_repo not in manifest.repos:
-            typer.echo(f"SKIP {ticket.id}: target_repo '{ticket.target_repo}' not in manifest", err=True)
+            typer.echo(
+                f"SKIP {ticket.id}: target_repo '{ticket.target_repo}' not in manifest", err=True
+            )
             continue
 
         repo = manifest.repos[ticket.target_repo]
         team_key = repo.linear_team or ticket.target_repo.upper()
 
-        typer.echo(f"\n{'─'*60}")
+        typer.echo(f"\n{'─' * 60}")
         typer.echo(f"{'[DRY-RUN] ' if dry_run else ''}Running {ticket.id}: {ticket.title}")
-        typer.echo(f"{'─'*60}")
+        typer.echo(f"{'─' * 60}")
 
         try:
             result = run_ticket(
@@ -141,7 +142,8 @@ def run(
 
         if result.usage_limit_hit and manifest.stop_on_usage_limit:
             typer.echo(
-                "\nClaude usage limit detected. Stopping after this ticket to avoid overage charges.\n"
+                "\nClaude usage limit detected. Stopping after this ticket to avoid "
+                "overage charges.\n"
                 "Set `stop_on_usage_limit: false` in manifest.yaml to disable this behaviour.",
                 err=True,
             )
@@ -149,7 +151,9 @@ def run(
             _print_summary(results, batch_file, dry_run)
             return
 
-        record: dict = {"status": "dry_run" if dry_run else ("succeeded" if result.success else "failed")}
+        record: dict = {
+            "status": "dry_run" if dry_run else ("succeeded" if result.success else "failed")
+        }
         record["duration_s"] = round(result.duration_s, 1)
         if result.pr_url:
             record["pr_url"] = result.pr_url
@@ -184,7 +188,7 @@ def _push_memory_prs(
 ) -> None:
     if dry_run or not successful_repos:
         return
-    typer.echo(f"\n{'─'*60}")
+    typer.echo(f"\n{'─' * 60}")
     typer.echo("Opening memory index PR(s)...")
     for repo_key in successful_repos:
         repo = manifest.repos[repo_key]
@@ -216,7 +220,11 @@ def _write_back(client: LinearClient, ticket, team_key: str, result: RunResult) 
         else:
             dur = _fmt_duration(result.duration_s)
             branch_note = f"\nBranch preserved: `{result.branch}`" if result.branch else ""
-            body = f"Execution failed: {result.error}\nReason: {result.reason}\nDuration: {dur}{branch_note}"
+            body = (
+                f"Execution failed: {result.error}\n"
+                f"Reason: {result.reason}\n"
+                f"Duration: {dur}{branch_note}"
+            )
             client.comment_on_issue(ticket.linear_id, body)
             state_id = client.get_state_id(team_key, "Failed for Agent")
             if state_id:
@@ -234,7 +242,7 @@ def _print_summary(results: list[RunResult], batch_file: Path, dry_run: bool) ->
     failed = [r for r in results if not r.success]
     label = "dry-run" if dry_run else "complete"
 
-    typer.echo(f"\n{'═'*60}")
+    typer.echo(f"\n{'═' * 60}")
     typer.echo(f"Run {label}: {len(succeeded)} succeeded, {len(failed)} failed.")
     for r in results:
         dur = _fmt_duration(r.duration_s)

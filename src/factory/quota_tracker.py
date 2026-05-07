@@ -6,8 +6,8 @@ from pathlib import Path
 
 # Default hours to assume a provider's quota window lasts before retrying.
 _DEFAULT_RESET_HOURS: dict[str, float] = {
-    "claude": 5.0,   # Claude Pro 5-hour rolling window
-    "codex": 4.0,    # OpenAI Plus free credits replenish roughly every 4 hours
+    "claude": 5.0,  # Claude Pro 5-hour rolling window
+    "codex": 4.0,  # OpenAI Plus free credits replenish roughly every 4 hours
 }
 
 

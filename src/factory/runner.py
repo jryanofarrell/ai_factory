@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import traceback
 import uuid
 from dataclasses import dataclass, field
@@ -128,15 +129,21 @@ def run_ticket(
             return _finalise(result, start, started_at, log_dir)
 
         if agent.timed_out:
-            delete_branch(repo.local_path, branch, repo.default_branch)
-            result.branch = None
+            typer.echo(
+                f"\nTime budget exceeded. Branch '{branch}' preserved for inspection.", err=True
+            )
+            _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
             result.error = f"Exceeded time budget of {ticket.budget_minutes} minutes"
             result.reason = "budget_exceeded"
             return _finalise(result, start, started_at, log_dir)
 
         if agent.exit_code != 0:
-            delete_branch(repo.local_path, branch, repo.default_branch)
-            result.branch = None
+            typer.echo(
+                f"\nAgent exited with code {agent.exit_code}. "
+                f"Branch '{branch}' preserved for inspection.",
+                err=True,
+            )
+            _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
             result.error = f"Agent exited with code {agent.exit_code}"
             result.reason = "unknown"
             return _finalise(result, start, started_at, log_dir)
@@ -151,13 +158,22 @@ def run_ticket(
         files_changed = get_changed_files(repo.local_path)
         result.files_changed = files_changed
 
-        # Scope check
+        # Scope check — exempt .claude/memory/ since every run writes a memory file there
         if ticket.scope_paths:
-            violations = check_scope(repo.local_path, ticket.scope_paths)
+            _ALWAYS_ALLOWED = (".claude/memory/",)
+            violations = [
+                f
+                for f in check_scope(repo.local_path, ticket.scope_paths)
+                if not any(f.startswith(prefix) for prefix in _ALWAYS_ALLOWED)
+            ]
             result.scope_violations = violations
             if violations:
-                delete_branch(repo.local_path, branch, repo.default_branch)
-                result.branch = None
+                typer.echo(
+                    f"\nScope violation. Branch '{branch}' preserved for inspection.", err=True
+                )
+                _preserve_and_return_to_default(
+                    repo.local_path, branch, repo.default_branch, ticket.id
+                )
                 result.error = f"Scope violation: {', '.join(violations)}"
                 result.reason = "scope_violation"
                 return _finalise(result, start, started_at, log_dir)
@@ -167,6 +183,12 @@ def run_ticket(
         if install_cmd:
             r = run_shell_command(install_cmd, repo.local_path)
             if r.returncode != 0:
+                typer.echo(
+                    f"\nInstall/build failed. Branch '{branch}' preserved for inspection.", err=True
+                )
+                _preserve_and_return_to_default(
+                    repo.local_path, branch, repo.default_branch, ticket.id
+                )
                 result.error = f"Install/build failed (exit {r.returncode})"
                 result.reason = "tests_failed"
                 return _finalise(result, start, started_at, log_dir)
@@ -188,7 +210,9 @@ def run_ticket(
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         memory_file = repo.local_path / ".claude" / "memory" / f"{ticket.id.lower()}_{today}.md"
         if not memory_file.exists():
-            typer.echo("  Note: Claude did not write a memory file — using generic fallback.", err=True)
+            typer.echo(
+                "  Note: Claude did not write a memory file — using generic fallback.", err=True
+            )
             write_run_memory(
                 local_path=repo.local_path,
                 ticket_id=ticket.id,
@@ -273,13 +297,11 @@ def _run_with_fallback(
             quota = claude_provider.fetch_quota()
             if quota is not None:
                 pct = round(quota.utilization_5h * 100, 1)
-                reset_str = (
-                    quota.reset_5h.strftime("%H:%M UTC") if quota.reset_5h else "unknown"
-                )
+                reset_str = quota.reset_5h.strftime("%H:%M UTC") if quota.reset_5h else "unknown"
                 typer.echo(f"  [claude] 5h quota: {pct}% used (resets {reset_str})")
                 if quota.utilization_5h >= max_utilization:
                     typer.echo(
-                        f"  [claude] {pct}% >= {max_utilization*100:.0f}% threshold — skipping.",
+                        f"  [claude] {pct}% >= {max_utilization * 100:.0f}% threshold — skipping.",
                         err=True,
                     )
                     if quota_tracker:
@@ -294,9 +316,7 @@ def _run_with_fallback(
                 local_path, prompt, capture_cost=capture_cost, budget_minutes=budget_minutes
             )
         elif name == "codex":
-            agent = codex_provider.run(
-                local_path, prompt, budget_minutes=budget_minutes
-            )
+            agent = codex_provider.run(local_path, prompt, budget_minutes=budget_minutes)
         else:
             typer.echo(f"  [{name}] unknown provider, skipping.", err=True)
             continue
@@ -328,8 +348,36 @@ def _run_with_fallback(
     return AgentResult(exit_code=-1, usage_limit_hit=True, provider="exhausted")
 
 
-def _finalise(result: RunResult, start: float, started_at: datetime, log_dir: Path | None) -> RunResult:
+def _preserve_and_return_to_default(
+    local_path: Path, branch: str, default_branch: str, ticket_id: str
+) -> None:
+    """Leave failed work on its branch and return the repo to the default branch."""
+    subprocess.run(["git", "add", "-A"], cwd=local_path, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", f"{ticket_id}: preserve failed factory run"],
+        cwd=local_path,
+        capture_output=True,
+        text=True,
+    )
+    result = subprocess.run(
+        ["git", "checkout", default_branch],
+        cwd=local_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        typer.echo(
+            f"  Warning: could not return from branch '{branch}' to '{default_branch}': "
+            f"{result.stderr.strip()}",
+            err=True,
+        )
+
+
+def _finalise(
+    result: RunResult, start: float, started_at: datetime, log_dir: Path | None
+) -> RunResult:
     import time as _time
+
     result.duration_s = _time.monotonic() - start
     if log_dir:
         _write_log(result, started_at, log_dir)
@@ -455,15 +503,22 @@ def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
         "",
         "## Before writing any code",
         "",
-        "1. List the contents of `.ai/skills/` to see what guidance is available.",
-        "2. Read every skill file that is relevant to this task. For example:",
+        "1. Read `AGENTS.md` and `CLAUDE.md` if present.",
+        "2. Read `.claude/memory/MEMORY.md` if present, then read only memory files",
+        "   that are relevant to this ticket.",
+        "3. Read scoped context only when it matches the task:",
+        "   - Backend/API work → read `.ai/context/api.md` if present.",
+        "   - Frontend/web work → read `.ai/context/web.md` if present.",
+        "   - Full-stack work → read both.",
+        "4. List the contents of `.ai/skills/` to see what guidance is available.",
+        "5. Read every skill file that is relevant to this task. For example:",
         "   - Adding or modifying a route → read `permissioning.md`",
         "   - Writing or modifying tests → read `testing.md`",
         "   - Adding a new API module → read `new-api-module.md` and `api-file-structure.md`",
         "   - Adding a new web page → read `new-web-page.md`",
         "   When in doubt, read the skill file. They encode repo-specific conventions that",
         "   override general patterns you may already know.",
-        "3. Then implement the changes.",
+        "6. Then implement the changes.",
         "",
         "## Implementation",
         "",
@@ -490,10 +545,12 @@ def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
         "```",
         "",
         "The name and description must describe WHAT WAS BUILT, not the ticket ID.",
-        "Good: `name: Contractor detail page` / `description: GET /contractors/:id route + detail page with job history table`",
+        "Good: `name: Contractor detail page` / `description: GET /contractors/:id "
+        "route + detail page with job history table`",
         f"Bad:  `name: {ticket.id} run {today}` / `description: Factory ran {ticket.id}`",
         "",
-        "Do NOT touch `.claude/memory/MEMORY.md` — that file is managed separately after all tickets complete.",
+        "Do NOT touch `.claude/memory/MEMORY.md` — that file is managed separately "
+        "after all tickets complete.",
         "",
         "Then stop.",
     ]

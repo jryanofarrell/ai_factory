@@ -51,7 +51,11 @@ def pull_tickets(
 
     teams = _teams_from_manifest(manifest, team_filter)
     if not teams:
-        print("No teams found in manifest" + (f" matching --team {team_filter}" if team_filter else "") + ".")
+        print(
+            "No teams found in manifest"
+            + (f" matching --team {team_filter}" if team_filter else "")
+            + "."
+        )
         return result
 
     for team_key, repo_key in teams.items():
@@ -108,7 +112,6 @@ def _teams_from_manifest(manifest: Manifest, team_filter: str | None) -> dict[st
 
 def _issue_to_ticket(issue: dict[str, Any], manifest: Manifest, default_repo: str) -> Ticket:
     description = issue.get("description") or ""
-    team_key = issue["team"]["key"]
 
     target_repo_section = _extract_section(description, "Target Repo")
     if target_repo_section:

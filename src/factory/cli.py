@@ -16,7 +16,9 @@ def _callback() -> None:
 def record_result(
     ticket_file: Path = typer.Argument(..., help="Path to the ticket file."),
     pr_url: str | None = typer.Option(None, "--pr-url"),
-    files: str | None = typer.Option(None, "--files", help="Comma-separated list of changed files."),
+    files: str | None = typer.Option(
+        None, "--files", help="Comma-separated list of changed files."
+    ),
     duration: float = typer.Option(0.0, "--duration", help="Wall-clock seconds."),
     cost: float | None = typer.Option(None, "--cost", help="Cost in USD."),
     failed: bool = typer.Option(False, "--failed"),
@@ -26,11 +28,12 @@ def record_result(
 ) -> None:
     """Write Linear write-back and memory after a skill-driven ticket run."""
     import os
+
     from dotenv import load_dotenv
+
     from .linear import LinearClient, LinearError
     from .manifest import load_manifest
     from .ticket import parse_ticket
-    from .git_ops import write_run_memory
 
     load_dotenv()
     api_key = os.environ.get("LINEAR_API_KEY")
@@ -80,7 +83,9 @@ def create_issue(
 ) -> None:
     """Create a single Linear issue in Backlog state (called by the /ticket skill)."""
     import os
+
     from dotenv import load_dotenv
+
     from .linear import LinearClient
     from .manifest import load_manifest
 
@@ -109,20 +114,28 @@ def create_issue(
         typer.echo(f"Error: no Backlog/Todo state found for team {team_key}", err=True)
         raise typer.Exit(1)
 
-    issue = client.create_issue(team_id=team_id, title=title, description=description, state_id=state_id)
+    issue = client.create_issue(
+        team_id=team_id, title=title, description=description, state_id=state_id
+    )
     typer.echo(f"{issue['identifier']} — {issue['url']}")
 
 
 @app.command()
 def update_issue(
-    identifier: str = typer.Option(..., "--identifier", help="Linear issue identifier (e.g. THM-5)."),
-    description: str | None = typer.Option(None, "--description", help="New description (markdown)."),
+    identifier: str = typer.Option(
+        ..., "--identifier", help="Linear issue identifier (e.g. THM-5)."
+    ),
+    description: str | None = typer.Option(
+        None, "--description", help="New description (markdown)."
+    ),
     title: str | None = typer.Option(None, "--title", help="New title."),
     manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml."),
 ) -> None:
     """Update the title and/or description of an existing Linear issue."""
     import os
+
     from dotenv import load_dotenv
+
     from .linear import LinearClient
 
     load_dotenv()
@@ -151,7 +164,9 @@ def update_issue(
 
 @app.command()
 def ideate(
-    brain_dump_file: Path | None = typer.Argument(None, help="Path to brain dump file (or omit to read from stdin)."),
+    brain_dump_file: Path | None = typer.Argument(
+        None, help="Path to brain dump file (or omit to read from stdin)."
+    ),
     repo: str | None = typer.Option(None, "--repo", help="Repo key from manifest.yaml."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip interactive confirmation."),
     manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml."),
@@ -159,7 +174,9 @@ def ideate(
     """Turn a brain dump into a structured Linear ticket."""
     import os
     import sys
+
     from dotenv import load_dotenv
+
     from .ideate import ideate as _ideate
 
     load_dotenv()
@@ -173,7 +190,9 @@ def ideate(
         brain_dump = sys.stdin.read()
 
     try:
-        _ideate(brain_dump=brain_dump, repo_key=repo, manifest_path=manifest, yes=yes, api_key=api_key)
+        _ideate(
+            brain_dump=brain_dump, repo_key=repo, manifest_path=manifest, yes=yes, api_key=api_key
+        )
     except (ValueError, FileNotFoundError) as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -187,15 +206,23 @@ def version() -> None:
 
 @app.command()
 def run(
-    no_pull: bool = typer.Option(False, "--no-pull", help="Skip pulling from Linear; run queue as-is."),
+    no_pull: bool = typer.Option(
+        False, "--no-pull", help="Skip pulling from Linear; run queue as-is."
+    ),
     no_cleanup: bool = typer.Option(False, "--no-cleanup", help="Skip stale branch cleanup."),
-    ticket: str | None = typer.Option(None, "--ticket", help="Run a single ticket by ID (e.g. THM-5)."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Run pipeline but skip push, PR, and Linear write-back."),
+    ticket: str | None = typer.Option(
+        None, "--ticket", help="Run a single ticket by ID (e.g. THM-5)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Run pipeline but skip push, PR, and Linear write-back."
+    ),
     manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml."),
 ) -> None:
     """Pull ready Linear tickets and execute each, writing results back to Linear."""
     import os
+
     from dotenv import load_dotenv
+
     from .orchestrator import run as _run
 
     load_dotenv()
@@ -217,13 +244,21 @@ def run(
 
 @app.command()
 def pull_tickets(
-    team: str | None = typer.Option(None, "--team", help="Restrict pull to a single Linear team key."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print would-be writes without touching disk."),
-    manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml (default: ./manifest.yaml)."),
+    team: str | None = typer.Option(
+        None, "--team", help="Restrict pull to a single Linear team key."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print would-be writes without touching disk."
+    ),
+    manifest: Path | None = typer.Option(
+        None, "--manifest", help="Path to manifest.yaml (default: ./manifest.yaml)."
+    ),
 ) -> None:
     """Pull ready Linear tickets to the local queue directory."""
     import os
+
     from dotenv import load_dotenv
+
     from .sync import pull_tickets as _pull
 
     load_dotenv()
@@ -241,8 +276,12 @@ def pull_tickets(
 def run_ticket(
     ticket_file: Path = typer.Argument(..., help="Path to the ticket markdown file."),
     repo: str = typer.Option(..., "--repo", help="Repo key from manifest.yaml."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Run pipeline but skip push, PR, and Linear write-back."),
-    manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml (default: ./manifest.yaml)."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Run pipeline but skip push, PR, and Linear write-back."
+    ),
+    manifest: Path | None = typer.Option(
+        None, "--manifest", help="Path to manifest.yaml (default: ./manifest.yaml)."
+    ),
 ) -> None:
     """Run a ticket through the executor pipeline and open a PR."""
     from .runner import run_ticket_from_file
