@@ -179,6 +179,7 @@ def run_ticket(
             r = run_shell_command(test_cmd, repo.local_path)
             if r.returncode != 0:
                 typer.echo(f"\nTests failed. Branch '{branch}' preserved for inspection.", err=True)
+                _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
                 result.error = f"Tests failed (exit {r.returncode})"
                 result.reason = "tests_failed"
                 return _finalise(result, start, started_at, log_dir)
@@ -230,6 +231,8 @@ def run_ticket(
         return _finalise(result, start, started_at, log_dir)
 
     except RuntimeError as e:
+        typer.echo(f"\nError: {e}", err=True)
+        _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
         result.error = str(e)
         if not result.reason:
             result.reason = "unknown"
@@ -238,6 +241,7 @@ def run_ticket(
     except Exception:
         msg = traceback.format_exc()
         typer.echo(f"\nUnexpected error on branch '{branch}':\n{msg}", err=True)
+        _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
         result.error = msg.splitlines()[-1]
         result.reason = "unknown"
         return _finalise(result, start, started_at, log_dir)
@@ -321,6 +325,27 @@ def _run_with_fallback(
     msg = "All executor providers are quota-exhausted. " + ", ".join(status_parts)
     typer.echo(f"\n{msg}", err=True)
     return AgentResult(exit_code=-1, usage_limit_hit=True, provider="exhausted")
+
+
+def _preserve_and_return_to_default(
+    local_path: Path, branch: str, default_branch: str, ticket_id: str
+) -> None:
+    """Commit any uncommitted changes to the factory branch, then switch back to default_branch.
+
+    This keeps the work intact for inspection while leaving the repo clean so the
+    next ticket's dirty-tree check doesn't fire.
+    """
+    import subprocess as _sp
+    dirty = _sp.run(
+        ["git", "status", "--porcelain"], cwd=local_path, capture_output=True, text=True
+    ).stdout.strip()
+    if dirty:
+        _sp.run(["git", "add", "-A"], cwd=local_path, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", f"WIP: {ticket_id} (preserved — see branch {branch})"],
+            cwd=local_path, capture_output=True,
+        )
+    _sp.run(["git", "checkout", default_branch], cwd=local_path, capture_output=True)
 
 
 def _finalise(result: RunResult, start: float, started_at: datetime, log_dir: Path | None) -> RunResult:
