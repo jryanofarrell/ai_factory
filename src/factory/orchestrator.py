@@ -96,6 +96,8 @@ def run(
 
     results: list[RunResult] = []
     successful_repos: set[str] = set()
+    # Track factory branches per repo so create_memory_pr can pull their memory files
+    session_branches: dict[str, list[str]] = {}
 
     # Step 5: process each ticket
     for ticket_file in ticket_files:
@@ -165,14 +167,21 @@ def run(
 
         if result.success and not dry_run:
             successful_repos.add(ticket.target_repo)
+            if result.branch:
+                session_branches.setdefault(ticket.target_repo, []).append(result.branch)
             processed_dir.mkdir(parents=True, exist_ok=True)
             ticket_file.rename(processed_dir / ticket_file.name)
 
-    _push_memory_prs(manifest, successful_repos, dry_run)
+    _push_memory_prs(manifest, successful_repos, session_branches, dry_run)
     _print_summary(results, batch_file, dry_run)
 
 
-def _push_memory_prs(manifest, successful_repos: set[str], dry_run: bool) -> None:
+def _push_memory_prs(
+    manifest,
+    successful_repos: set[str],
+    session_branches: dict[str, list[str]],
+    dry_run: bool,
+) -> None:
     if dry_run or not successful_repos:
         return
     typer.echo(f"\n{'─'*60}")
@@ -180,7 +189,12 @@ def _push_memory_prs(manifest, successful_repos: set[str], dry_run: bool) -> Non
     for repo_key in successful_repos:
         repo = manifest.repos[repo_key]
         try:
-            pr_url = create_memory_pr(repo.local_path, repo.default_branch, repo.github)
+            pr_url = create_memory_pr(
+                repo.local_path,
+                repo.default_branch,
+                repo.github,
+                session_branches=session_branches.get(repo_key),
+            )
             if pr_url:
                 typer.echo(f"  {repo_key}: memory PR → {pr_url}")
             else:
