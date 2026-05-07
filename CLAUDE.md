@@ -11,6 +11,10 @@
 - `docs/PHASES.md` — phase summary and current status
 - `phases/PHASE_0_SPEC.md` — current phase spec (update this pointer when advancing phases)
 
+## Rules
+
+Read `.ai/rules/factory.md` before writing any code. These always apply.
+
 ## Stack
 
 - Python 3.12+
@@ -30,7 +34,6 @@
 - The executor reads tickets from disk (`examples/tickets/` for local tests; a future Linear-pull step writes them there). It does not call Linear directly.
 
 ## Rules
-
 1. **Work on one phase at a time.** The current phase spec's "Out of scope" list is a hard boundary. Do not implement Phase 1+ behavior while working on Phase 0, and so on.
 2. **Do not edit `docs/DECISIONS.md` in place.** If a decision needs to change, append a new ADR that supersedes the old one, or pause and ask the user before modifying anything.
 3. **Do not run `git push --force` on shared branches.**
@@ -38,9 +41,8 @@
 5. **When the right shape of a thing is unclear, read `docs/DECISIONS.md` first.** Many patterns that look like open questions have already been settled there.
 
 ## Target repositories
-
 Projects that the factory manages live under `repos/`. Each project has its own `CLAUDE.md` and may have its own memory files. **Before doing any work related to a target project — including ideation, ticketing, or code changes — read that project's `CLAUDE.md` and any relevant memory files first.** Do not assume conventions from `ai_factory` apply to target projects.
 
 ## Skills
 
-Factory-level reusable skills live under `.claude/skills/`. See `.claude/skills/README.md` for the index and conventions. No skills are implemented in Phase 0.
+Factory-level reusable skills live under `.claude/skills/`. See `.claude/skills/README.md` for the index and conventions.

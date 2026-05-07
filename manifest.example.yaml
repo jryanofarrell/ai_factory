@@ -1,5 +1,19 @@
 version: 1
 queue_dir: .factory/queue
+
+# Executor providers tried in order. If the first hits its quota, the next is used.
+# Supported: claude, codex
+# To install codex: npm install -g @openai/codex
+executor_providers:
+  - claude
+  - codex
+
+# Hours to wait before retrying a quota-exhausted provider.
+# Defaults: claude=5.0 (Pro 5-hour window), codex=4.0
+# quota_reset_hours:
+#   claude: 5.0
+#   codex: 4.0
+
 repos:
   thms-platform:
     github: toms-hms/thms-platform

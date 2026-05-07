@@ -163,3 +163,15 @@ These risks were identified during the design conversation but are not turned in
 - `## Notes` (optional) — freeform context for the executor
 
 **Consequences:** Users write structured Markdown in the Linear description field, which is readable and editable in the Linear UI. No workspace-level custom property setup is required. The section names are case-sensitive and must appear exactly as above. This is simpler to set up than custom properties and works within the current API constraints. If Linear exposes custom properties in a future API version, this decision can be revisited — but the description format is not worse from a usability standpoint.
+
+---
+
+## ADR-011: Multi-provider executor with quota-aware fallback
+
+**Status:** Accepted — supersedes ADR-002
+
+**Context:** ADR-002 chose a single model (Claude Sonnet) and explicitly deferred model-routing logic as unjustified complexity at personal-factory volumes. The constraint has changed: both Claude Pro and OpenAI's Codex CLI include free usage credits with a $20/month subscription, but each has a rolling quota window (Claude ~5 hours, Codex ~4 hours). When one provider hits its quota mid-batch, the factory previously stopped entirely. Adding a second provider as a fallback doubles throughput without adding paid API costs — making the routing complexity worthwhile at current usage patterns.
+
+**Decision:** The executor supports an ordered list of providers (`executor_providers` in `manifest.yaml`, default `["claude"]`). When `run_ticket` invokes the executor, it tries providers in order via `_run_with_fallback`. If a provider returns `usage_limit_hit=True`, the factory records the exhaustion timestamp to `.factory/quota_state.json` via `QuotaTracker` and tries the next provider. Subsequent tickets skip exhausted providers until the reset window has elapsed. Supported providers: `claude` (wraps `claude` CLI), `codex` (wraps `codex exec --json`). The local LLM provider (LM Studio) is deferred to a later phase; `codex exec` already supports `--local-provider lmstudio` natively when that time comes.
+
+**Consequences:** Operators who want fallback add `executor_providers: [claude, codex]` to `manifest.yaml` and install `codex` (`npm install -g @openai/codex`). No other configuration is required. The quota state file is gitignored (it is under `.factory/`). Quota detection for `codex` relies on parsing JSONL events and stderr for OpenAI's 429/402 error codes; if OpenAI changes its error format, the keyword list in `providers/codex.py` may need updating. The `stop_on_usage_limit` manifest flag now triggers only when all configured providers are exhausted, not just the first one.
