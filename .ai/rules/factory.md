@@ -11,3 +11,5 @@
 5. **When the right shape of a thing is unclear, read `docs/DECISIONS.md` first.** Many patterns that look like open questions have already been settled there.
 
 6. **Before doing any work related to a target project, read that project's `CLAUDE.md` and any relevant memory files first.** Do not assume conventions from `ai_factory` apply to target projects.
+
+7. **Before pushing target-repo work, run the relevant validation commands and make sure they pass.** For code changes, this includes that repo's applicable build, lint, and test commands. If a check cannot be run, do not push until the blocker is explicit and accepted.
