@@ -13,3 +13,5 @@
 6. **Before doing any work related to a target project, read that project's `CLAUDE.md` and any relevant memory files first.** Do not assume conventions from `ai_factory` apply to target projects.
 
 7. **Before pushing target-repo work, run the relevant validation commands and make sure they pass.** For code changes, this includes that repo's applicable build, lint, and test commands. If a check cannot be run, do not push until the blocker is explicit and accepted.
+
+8. **Never push directly to `main` (or any default branch) in ai_factory or any target repo.** Always create a feature branch and push there. Direct pushes to `main` are only permitted when the user explicitly instructs it.
