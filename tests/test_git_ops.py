@@ -1,7 +1,10 @@
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
-from factory.git_ops import check_scope, get_changed_files
+import pytest
+
+from factory.git_ops import check_docker, check_scope, get_changed_files
 
 
 def _make_git_repo(tmp_path: Path) -> Path:
@@ -60,3 +63,53 @@ def test_get_changed_files(tmp_path):
     files = get_changed_files(repo)
     assert "new_file.md" in files
     assert "README.md" in files
+
+
+def test_check_docker_returns_when_daemon_running():
+    with (
+        patch("factory.git_ops.shutil.which", return_value="/usr/local/bin/docker"),
+        patch(
+            "factory.git_ops.subprocess.run",
+            return_value=subprocess.CompletedProcess(["docker", "info"], 0),
+        ) as run,
+    ):
+        check_docker()
+
+    run.assert_called_once_with(["docker", "info"], capture_output=True)
+
+
+def test_check_docker_starts_docker_desktop_on_macos():
+    calls = [
+        subprocess.CompletedProcess(["docker", "info"], 1),
+        subprocess.CompletedProcess(["open", "-a", "Docker"], 0),
+        subprocess.CompletedProcess(["docker", "info"], 1),
+        subprocess.CompletedProcess(["docker", "info"], 0),
+    ]
+
+    with (
+        patch("factory.git_ops.shutil.which", return_value="/usr/local/bin/docker"),
+        patch("factory.git_ops.platform.system", return_value="Darwin"),
+        patch("factory.git_ops.subprocess.run", side_effect=calls) as run,
+        patch("factory.git_ops.time.sleep"),
+    ):
+        check_docker(timeout=5)
+
+    assert [c.args[0] for c in run.call_args_list] == [
+        ["docker", "info"],
+        ["open", "-a", "Docker"],
+        ["docker", "info"],
+        ["docker", "info"],
+    ]
+
+
+def test_check_docker_raises_when_daemon_stopped_on_non_macos():
+    with (
+        patch("factory.git_ops.shutil.which", return_value="/usr/bin/docker"),
+        patch("factory.git_ops.platform.system", return_value="Linux"),
+        patch(
+            "factory.git_ops.subprocess.run",
+            return_value=subprocess.CompletedProcess(["docker", "info"], 1),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="Docker daemon is not running"):
+            check_docker()

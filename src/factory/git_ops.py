@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import shutil
 import signal
 import subprocess
@@ -72,14 +73,35 @@ def check_tools(providers: list[str] | None = None) -> None:
         )
 
 
-def check_docker() -> None:
+def check_docker(timeout: int = 120) -> None:
     if not shutil.which("docker"):
         raise RuntimeError(
             "docker not found on PATH. Install Docker Desktop and ensure it is running."
         )
-    result = subprocess.run(["docker", "info"], capture_output=True)
+    if _docker_info_ok():
+        return
+
+    if platform.system() != "Darwin":
+        raise RuntimeError("Docker daemon is not running. Start Docker and try again.")
+
+    print("Docker daemon is not running. Starting Docker Desktop...", flush=True)
+    result = subprocess.run(["open", "-a", "Docker"], capture_output=True)
     if result.returncode != 0:
-        raise RuntimeError("Docker daemon is not running. Start Docker Desktop and try again.")
+        raise RuntimeError("Failed to start Docker Desktop. Start Docker manually and try again.")
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _docker_info_ok():
+            print("Docker daemon is ready.", flush=True)
+            return
+        time.sleep(2)
+
+    raise RuntimeError(f"Docker daemon did not become ready within {timeout}s.")
+
+
+def _docker_info_ok() -> bool:
+    result = subprocess.run(["docker", "info"], capture_output=True)
+    return result.returncode == 0
 
 
 def ensure_stack_ready(local_path: Path) -> None:
