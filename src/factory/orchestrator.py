@@ -93,6 +93,7 @@ def run(
 
     signal.signal(signal.SIGINT, _handle_sigint)
 
+    processing_dir = queue_dir / "processing"
     results: list[RunResult] = []
     successful_repos: set[str] = set()
     # Track factory branches per repo so create_memory_pr can pull their memory files
@@ -117,6 +118,12 @@ def run(
 
         repo = manifest.repos[ticket.target_repo]
         team_key = repo.linear_team or ticket.target_repo.upper()
+
+        # Stage the ticket before running so interruptions don't re-queue it.
+        # On success → processed/. On failure → back to queue root for retry.
+        processing_dir.mkdir(parents=True, exist_ok=True)
+        staging_file = processing_dir / ticket_file.name
+        ticket_file.rename(staging_file)
 
         typer.echo(f"\n{'─' * 60}")
         typer.echo(f"{'[DRY-RUN] ' if dry_run else ''}Running {ticket.id}: {ticket.title}")
@@ -174,7 +181,10 @@ def run(
             if result.branch:
                 session_branches.setdefault(ticket.target_repo, []).append(result.branch)
             processed_dir.mkdir(parents=True, exist_ok=True)
-            ticket_file.rename(processed_dir / ticket_file.name)
+            staging_file.rename(processed_dir / staging_file.name)
+        else:
+            # Return to queue root so the ticket is eligible for retry next run.
+            staging_file.rename(queue_dir / staging_file.name)
 
     _push_memory_prs(manifest, successful_repos, session_branches, dry_run)
     _print_summary(results, batch_file, dry_run)
