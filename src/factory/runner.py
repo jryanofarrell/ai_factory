@@ -592,22 +592,21 @@ def _load_repo_rules(repo_path: Path) -> str:
 
 
 def _skill_loading_instructions(ticket: Ticket) -> list[str]:
-    """Return step 4 of the pre-code checklist — explicit skill list if the ticket named them,
-    otherwise a generic discovery instruction."""
-    if ticket.skills:
-        lines = ["4. Read these skill files — pre-selected for this task:"]
-        for s in ticket.skills:
-            lines.append(f"   - `{s}`")
-        lines.append(
-            "   If the task requires something not covered above, "
-            "check `.ai/skills/` for additional relevant files."
-        )
-        return lines
-    return [
+    """Return step 4 of the pre-code checklist.
+
+    Always instructs the executor to discover skills. If the ticket named skills,
+    lists them as a starting hint so the executor doesn't have to guess from scratch.
+    """
+    lines = [
         "4. List the contents of `.ai/skills/` to see what guidance is available,",
         "   then read every skill file relevant to this task. They encode repo-specific",
         "   conventions that override general patterns you may already know.",
     ]
+    if ticket.skills:
+        lines += ["   Pre-selected as likely relevant — read these first:"]
+        for s in ticket.skills:
+            lines.append(f"   - `{s}`")
+    return lines
 
 
 def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
