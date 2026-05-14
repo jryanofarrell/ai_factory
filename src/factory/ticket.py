@@ -18,6 +18,7 @@ class Ticket:
     linear_url: str | None = None
     linear_id: str | None = None  # UUID used for Linear API write-back
     notes: str = ""
+    skills: list[str] = field(default_factory=list)
     raw_body: str = ""
 
     def to_markdown(self) -> str:
@@ -36,6 +37,8 @@ class Ticket:
         parts = [f"## Acceptance Criteria\n\n{self.acceptance_criteria}"]
         if self.notes:
             parts.append(f"## Notes\n\n{self.notes}")
+        if self.skills:
+            parts.append("## Skills\n\n" + "\n".join(self.skills))
 
         fm_str = yaml.dump(fm, default_flow_style=False, allow_unicode=True)
         return f"---\n{fm_str}---\n\n" + "\n\n".join(parts) + "\n"
@@ -68,6 +71,9 @@ def parse_ticket(path: Path) -> Ticket:
     if acceptance_criteria is None:
         raise ValueError(f"{path}: missing required '## Acceptance Criteria' section")
 
+    skills_raw = _extract_section(body, "Skills") or ""
+    skills = [line.strip() for line in skills_raw.splitlines() if line.strip()]
+
     return Ticket(
         id=str(fm["id"]),
         title=str(fm["title"]),
@@ -79,6 +85,7 @@ def parse_ticket(path: Path) -> Ticket:
         linear_url=fm.get("linear_url"),
         linear_id=fm.get("linear_id"),
         notes=_extract_section(body, "Notes") or "",
+        skills=skills,
         raw_body=body,
     )
 

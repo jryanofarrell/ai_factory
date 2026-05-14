@@ -109,7 +109,7 @@ def run_ticket(
             repo.local_path,
             _build_prompt(ticket, repo.local_path),
             capture_cost=capture_cost,
-            budget_minutes=ticket.budget_minutes,
+            budget_minutes=None,
             providers=_providers,
             quota_tracker=quota_tracker,
             max_utilization=max_utilization,
@@ -130,11 +130,11 @@ def run_ticket(
 
         if agent.timed_out:
             typer.echo(
-                f"\nTime budget exceeded. Branch '{branch}' preserved for inspection.", err=True
+                f"\nExecutor timed out. Branch '{branch}' preserved for inspection.", err=True
             )
             _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
-            result.error = f"Exceeded time budget of {ticket.budget_minutes} minutes"
-            result.reason = "budget_exceeded"
+            result.error = "Executor timed out"
+            result.reason = "timeout"
             return _finalise(result, start, started_at, log_dir)
 
         if agent.exit_code != 0:
@@ -158,25 +158,14 @@ def run_ticket(
         files_changed = get_changed_files(repo.local_path)
         result.files_changed = files_changed
 
-        # Scope check — exempt .claude/memory/ since every run writes a memory file there
-        if ticket.scope_paths:
-            _ALWAYS_ALLOWED = (".claude/memory/",)
-            violations = [
-                f
-                for f in check_scope(repo.local_path, ticket.scope_paths)
-                if not any(f.startswith(prefix) for prefix in _ALWAYS_ALLOWED)
-            ]
-            result.scope_violations = violations
-            if violations:
-                typer.echo(
-                    f"\nScope violation. Branch '{branch}' preserved for inspection.", err=True
-                )
-                _preserve_and_return_to_default(
-                    repo.local_path, branch, repo.default_branch, ticket.id
-                )
-                result.error = f"Scope violation: {', '.join(violations)}"
-                result.reason = "scope_violation"
-                return _finalise(result, start, started_at, log_dir)
+        violations = _scope_violations(repo.local_path, ticket)
+        result.scope_violations = violations
+        if violations:
+            typer.echo(f"\nScope violation. Branch '{branch}' preserved for inspection.", err=True)
+            _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
+            result.error = f"Scope violation: {', '.join(violations)}"
+            result.reason = "scope_violation"
+            return _finalise(result, start, started_at, log_dir)
 
         # Install / build
         install_cmd = repo.build_command or detect_install_command(repo.local_path)
@@ -200,10 +189,74 @@ def run_ticket(
                 ensure_stack_ready(repo.local_path)
             r = run_shell_command(test_cmd, repo.local_path)
             if r.returncode != 0:
-                typer.echo(f"\nTests failed. Branch '{branch}' preserved for inspection.", err=True)
-                result.error = f"Tests failed (exit {r.returncode})"
-                result.reason = "tests_failed"
-                return _finalise(result, start, started_at, log_dir)
+                repair = _attempt_test_repair(
+                    ticket=ticket,
+                    repo_path=repo.local_path,
+                    test_cmd=test_cmd,
+                    exit_code=r.returncode,
+                    capture_cost=capture_cost,
+                    providers=_providers,
+                    quota_tracker=quota_tracker,
+                    max_utilization=max_utilization,
+                )
+                if repair.exit_code != 0 or repair.timed_out or repair.usage_limit_hit:
+                    typer.echo(
+                        f"\nTest repair failed. Branch '{branch}' preserved for inspection.",
+                        err=True,
+                    )
+                    _preserve_and_return_to_default(
+                        repo.local_path, branch, repo.default_branch, ticket.id
+                    )
+                    result.error = _repair_error(repair)
+                    result.reason = "tests_failed"
+                    return _finalise(result, start, started_at, log_dir)
+
+                files_changed = get_changed_files(repo.local_path)
+                result.files_changed = files_changed
+
+                violations = _scope_violations(repo.local_path, ticket)
+                result.scope_violations = violations
+                if violations:
+                    typer.echo(
+                        f"\nScope violation after test repair. "
+                        f"Branch '{branch}' preserved for inspection.",
+                        err=True,
+                    )
+                    _preserve_and_return_to_default(
+                        repo.local_path, branch, repo.default_branch, ticket.id
+                    )
+                    result.error = f"Scope violation after test repair: {', '.join(violations)}"
+                    result.reason = "scope_violation"
+                    return _finalise(result, start, started_at, log_dir)
+
+                r = run_shell_command(test_cmd, repo.local_path)
+                if r.returncode != 0:
+                    typer.echo(
+                        f"\nTests still failed after one repair attempt. "
+                        f"Branch '{branch}' preserved for inspection.",
+                        err=True,
+                    )
+                    _preserve_and_return_to_default(
+                        repo.local_path, branch, repo.default_branch, ticket.id
+                    )
+                    result.error = (
+                        f"Tests failed after one repair attempt (exit {r.returncode}). "
+                        f"Inspect branch '{branch}' and the test output above."
+                    )
+                    result.reason = "tests_failed"
+                    return _finalise(result, start, started_at, log_dir)
+
+        files_changed = get_changed_files(repo.local_path)
+        result.files_changed = files_changed
+
+        violations = _scope_violations(repo.local_path, ticket)
+        result.scope_violations = violations
+        if violations:
+            typer.echo(f"\nScope violation. Branch '{branch}' preserved for inspection.", err=True)
+            _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
+            result.error = f"Scope violation: {', '.join(violations)}"
+            result.reason = "scope_violation"
+            return _finalise(result, start, started_at, log_dir)
 
         # Memory file: Claude writes it as part of its task (see _build_prompt).
         # Fall back to the generic writer only if Claude forgot.
@@ -348,6 +401,80 @@ def _run_with_fallback(
     return AgentResult(exit_code=-1, usage_limit_hit=True, provider="exhausted")
 
 
+def _scope_violations(local_path: Path, ticket: Ticket) -> list[str]:
+    """Return changed files outside the ticket scope, with factory memory always allowed."""
+    if not ticket.scope_paths:
+        return []
+    always_allowed = (".claude/memory/",)
+    return [
+        f
+        for f in check_scope(local_path, ticket.scope_paths)
+        if not any(f.startswith(prefix) for prefix in always_allowed)
+    ]
+
+
+def _attempt_test_repair(
+    *,
+    ticket: Ticket,
+    repo_path: Path,
+    test_cmd: str,
+    exit_code: int,
+    capture_cost: bool,
+    providers: list[str],
+    quota_tracker: QuotaTracker | None,
+    max_utilization: float,
+) -> AgentResult:
+    """Give the executor one focused chance to repair failing tests."""
+    typer.echo("\nTests failed. Asking executor for one repair attempt.", err=True)
+    return _run_with_fallback(
+        repo_path,
+        _build_test_repair_prompt(ticket, test_cmd, exit_code),
+        capture_cost=capture_cost,
+        budget_minutes=None,
+        providers=providers,
+        quota_tracker=quota_tracker,
+        max_utilization=max_utilization,
+    )
+
+
+def _repair_error(agent: AgentResult) -> str:
+    if agent.timed_out:
+        return "Test repair executor timed out"
+    if agent.usage_limit_hit:
+        return "Test repair skipped because all executor providers are quota-exhausted"
+    return f"Test repair agent exited with code {agent.exit_code}"
+
+
+def _build_test_repair_prompt(ticket: Ticket, test_cmd: str, exit_code: int) -> str:
+    return "\n".join(
+        [
+            "The implementation for this ticket was completed, but the verification command "
+            "failed.",
+            "",
+            f"Ticket ID: {ticket.id}",
+            f"Title: {ticket.title}",
+            "",
+            "## Acceptance Criteria",
+            "",
+            ticket.acceptance_criteria,
+            "",
+            "## Failed Verification",
+            "",
+            f"Command: `{test_cmd}`",
+            f"Exit code: {exit_code}",
+            "",
+            "Re-run the failing command, inspect the failure, and make the smallest changes needed",
+            "to get the suite passing while preserving the ticket acceptance criteria.",
+            "",
+            "If the failure is caused by an unrelated broken environment or requires work outside",
+            "the ticket's scope, do not make speculative changes. Print a concise explanation of",
+            "what failed and what a human should do next.",
+            "",
+            "Do NOT run git commit. Do NOT run git push. Only edit files, then stop.",
+        ]
+    )
+
+
 def _preserve_and_return_to_default(
     local_path: Path, branch: str, default_branch: str, ticket_id: str
 ) -> None:
@@ -464,6 +591,25 @@ def _load_repo_rules(repo_path: Path) -> str:
     return "\n\n".join(sections)
 
 
+def _skill_loading_instructions(ticket: Ticket) -> list[str]:
+    """Return step 4 of the pre-code checklist — explicit skill list if the ticket named them,
+    otherwise a generic discovery instruction."""
+    if ticket.skills:
+        lines = ["4. Read these skill files — pre-selected for this task:"]
+        for s in ticket.skills:
+            lines.append(f"   - `{s}`")
+        lines.append(
+            "   If the task requires something not covered above, "
+            "check `.ai/skills/` for additional relevant files."
+        )
+        return lines
+    return [
+        "4. List the contents of `.ai/skills/` to see what guidance is available,",
+        "   then read every skill file relevant to this task. They encode repo-specific",
+        "   conventions that override general patterns you may already know.",
+    ]
+
+
 def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     memory_path = f".claude/memory/{ticket.id.lower()}_{today}.md"
@@ -510,15 +656,8 @@ def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
         "   - Backend/API work → read `.ai/context/api.md` if present.",
         "   - Frontend/web work → read `.ai/context/web.md` if present.",
         "   - Full-stack work → read both.",
-        "4. List the contents of `.ai/skills/` to see what guidance is available.",
-        "5. Read every skill file that is relevant to this task. For example:",
-        "   - Adding or modifying a route → read `permissioning.md`",
-        "   - Writing or modifying tests → read `testing.md`",
-        "   - Adding a new API module → read `new-api-module.md` and `api-file-structure.md`",
-        "   - Adding a new web page → read `new-web-page.md`",
-        "   When in doubt, read the skill file. They encode repo-specific conventions that",
-        "   override general patterns you may already know.",
-        "6. Then implement the changes.",
+        *_skill_loading_instructions(ticket),
+        "5. Then implement the changes.",
         "",
         "## Implementation",
         "",
