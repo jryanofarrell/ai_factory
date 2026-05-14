@@ -77,7 +77,7 @@
 
 **Branch protection required.** Every registered target repository must have branch protection rules on its default branch that require at least one human approval before merge. The factory does not enforce this at setup time, but Phase 4 will add a pre-flight check.
 
-**Budget caps.** Every ticket declares `budget_tokens` and `budget_minutes`. The executor respects these limits; a run that exceeds them is aborted and the ticket is marked failed. Budget enforcement is implemented in Phase 4.
+**Soft budgets.** Tickets may include `budget_tokens` and `budget_minutes` as planning guidance, but the executor does not abort solely because a run exceeds those values. If a ticket is running far longer than expected, the agent should preserve coherent work, report the overrun, and let the human decide whether to continue or split the work.
 
 **Secrets never in code.** The factory reads API keys and tokens from environment variables or `manifest.yaml` (gitignored). Nothing sensitive is committed to `ai_factory` or to any target repo as a result of a factory run. Pre-run checks (Phase 4) verify that the target repo's `.gitignore` covers common secret files.
 

@@ -38,8 +38,8 @@ These custom properties must be created at the workspace level in Linear and wil
 |---|---|---|---|---|
 | `acceptance_criteria` | Text (multiline) | Yes | — | Criteria the PR must satisfy. The executor reads this as its primary success definition. Required — do not mark a ticket ready without it. |
 | `scope_paths` | Text (multiline) | No | (no restriction) | Glob patterns (one per line) restricting which files the executor may modify. If absent, no scope restriction is enforced. Enforced in Phase 4. |
-| `budget_tokens` | Number | No | 50 000 | Maximum Claude API tokens for this run. The executor is aborted if it exceeds this. Enforced in Phase 4. |
-| `budget_minutes` | Number | No | 30 | Maximum wall-clock minutes for this run. The executor is aborted if it exceeds this. Enforced in Phase 4. |
+| `budget_tokens` | Number | No | 50 000 | Soft token estimate for planning. The executor does not abort solely because this value is exceeded. |
+| `budget_minutes` | Number | No | 30 | Soft wall-clock estimate for planning. The executor does not abort solely because this value is exceeded. |
 | `target_repo` | Text | No | (derived from team) | Explicit repository override. Use when a ticket in team `THMS` should target a repo other than `thms-platform`. Format: `owner/repo`. |
 
 **Setup:** Create these as custom properties in your Linear workspace settings (Settings → Properties). Use the field names exactly as listed above — the factory reads them by name.

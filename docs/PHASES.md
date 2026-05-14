@@ -30,7 +30,7 @@ Connects the pull step (Phase 2) and the executor (Phase 1) into a single `facto
 
 ## Phase 4 — Hardening `[NOT STARTED]`
 
-Adds the safety rails that make the factory safe to run on real work: scope checks (diff vs. `scope_paths` globs), budget cap enforcement (`budget_tokens` and `budget_minutes`), idempotency (detect already-open PRs for a ticket, skip re-running), pre-flight checks (branch protection rules exist, `.gitignore` covers secrets), a local Linear cache (ticket files survive a Linear outage), and improved error handling and retry logic with exponential backoff. After this phase the factory is safe to use on production repositories.
+Adds the safety rails that make the factory safe to run on real work: scope checks (diff vs. `scope_paths` globs), soft budget overrun reporting (`budget_tokens` and `budget_minutes` as guidance, not abort conditions), idempotency (detect already-open PRs for a ticket, skip re-running), pre-flight checks (branch protection rules exist, `.gitignore` covers secrets), a local Linear cache (ticket files survive a Linear outage), and improved error handling and retry logic with exponential backoff. After this phase the factory is safe to use on production repositories.
 
 ---
 

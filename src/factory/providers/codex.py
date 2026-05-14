@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import queue
 import signal
 import subprocess
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import TextIO
 
 from .base import AgentResult
 
@@ -63,6 +68,7 @@ def run(
     ]
     if model:
         cmd += ["-m", model]
+    cmd.append("--")
     cmd.append(full_prompt)
 
     timeout_s = budget_minutes * 60 if budget_minutes else None
@@ -80,42 +86,41 @@ def run(
         text=True,
     )
 
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        proc.send_signal(signal.SIGTERM)
-        try:
-            proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-        return AgentResult(exit_code=-1, timed_out=True, provider="codex")
-
     output_lines: list[str] = []
     usage_limit_hit = False
     last_message: str | None = None
+    stderr_lines: list[str] = []
 
-    for raw_line in (stdout or "").splitlines():
+    def on_stdout(raw_line: str) -> None:
+        nonlocal last_message, usage_limit_hit
         raw_line = raw_line.strip()
         if not raw_line:
-            continue
+            return
         try:
             event = json.loads(raw_line)
             usage_limit_hit = usage_limit_hit or _is_quota_event(event)
-            msg = _extract_message(event)
-            if msg:
-                last_message = msg
-                output_lines.append(msg)
+            progress = _extract_progress(event)
+            if progress:
+                print(progress, flush=True)
+                output_lines.append(progress)
+            message = _extract_message(event)
+            if message:
+                last_message = message
         except json.JSONDecodeError:
+            print(raw_line, flush=True)
             output_lines.append(raw_line)
 
-    # Also check stderr for quota signals if stdout was empty/unparseable
-    if not usage_limit_hit and stderr:
-        err_lower = stderr.lower()
+    timed_out = _stream_process(proc, timeout_s, on_stdout, stderr_lines)
+    if timed_out:
+        return AgentResult(exit_code=-1, timed_out=True, provider="codex")
+
+    # Also check stderr for quota signals if stdout was empty/unparseable.
+    if not usage_limit_hit and stderr_lines:
+        err_lower = "\n".join(stderr_lines).lower()
         usage_limit_hit = any(kw in err_lower for kw in _QUOTA_KEYWORDS)
 
-    if output_lines:
-        print("\n".join(output_lines[-20:]))  # tail the output
+    if proc.returncode != 0 and not output_lines and stderr_lines:
+        print("\n".join(stderr_lines).strip())
 
     return AgentResult(
         exit_code=proc.returncode,
@@ -123,6 +128,56 @@ def run(
         usage_limit_hit=usage_limit_hit,
         provider="codex",
     )
+
+
+def _stream_process(
+    proc: subprocess.Popen[str],
+    timeout_s: float | None,
+    on_stdout: Callable[[str], None],
+    stderr_lines: list[str],
+) -> bool:
+    q: queue.Queue[tuple[str, str | None]] = queue.Queue()
+
+    def read_stream(name: str, stream: TextIO | None) -> None:
+        if stream is None:
+            return
+        for line in stream:
+            q.put((name, line))
+        q.put((name, None))
+
+    threads = [
+        threading.Thread(target=read_stream, args=("stdout", proc.stdout), daemon=True),
+        threading.Thread(target=read_stream, args=("stderr", proc.stderr), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    deadline = time.monotonic() + timeout_s if timeout_s else None
+    open_streams = {"stdout", "stderr"}
+    while open_streams:
+        if deadline and time.monotonic() > deadline:
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            return True
+        try:
+            name, line = q.get(timeout=0.1)
+        except queue.Empty:
+            if proc.poll() is not None and q.empty():
+                break
+            continue
+        if line is None:
+            open_streams.discard(name)
+        elif name == "stdout":
+            on_stdout(line)
+        else:
+            stderr_lines.append(line.rstrip())
+
+    proc.wait()
+    return False
 
 
 def _is_quota_event(event: dict) -> bool:
@@ -151,3 +206,17 @@ def _extract_message(event: dict) -> str | None:
             parts = [c.get("text", "") for c in content if isinstance(c, dict)]
             return " ".join(p for p in parts if p) or None
     return None
+
+
+def _extract_progress(event: dict) -> str | None:
+    event_type = event.get("type")
+    if event_type in {"thread.started", "turn.started"}:
+        return f"  [codex] {event_type}"
+    if event_type == "item.completed":
+        item = event.get("item") or {}
+        if item.get("type") == "agent_message":
+            text = item.get("text")
+            return str(text) if text else None
+        item_type = item.get("type")
+        return f"  [codex] completed {item_type}" if item_type else None
+    return _extract_message(event)

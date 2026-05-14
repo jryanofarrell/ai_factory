@@ -175,3 +175,15 @@ These risks were identified during the design conversation but are not turned in
 **Decision:** The executor supports an ordered list of providers (`executor_providers` in `manifest.yaml`, default `["claude"]`). When `run_ticket` invokes the executor, it tries providers in order via `_run_with_fallback`. If a provider returns `usage_limit_hit=True`, the factory records the exhaustion timestamp to `.factory/quota_state.json` via `QuotaTracker` and tries the next provider. Subsequent tickets skip exhausted providers until the reset window has elapsed. Supported providers: `claude` (wraps `claude` CLI), `codex` (wraps `codex exec --json`). The local LLM provider (LM Studio) is deferred to a later phase; `codex exec` already supports `--local-provider lmstudio` natively when that time comes.
 
 **Consequences:** Operators who want fallback add `executor_providers: [claude, codex]` to `manifest.yaml` and install `codex` (`npm install -g @openai/codex`). No other configuration is required. The quota state file is gitignored (it is under `.factory/`). Quota detection for `codex` relies on parsing JSONL events and stderr for OpenAI's 429/402 error codes; if OpenAI changes its error format, the keyword list in `providers/codex.py` may need updating. The `stop_on_usage_limit` manifest flag now triggers only when all configured providers are exhausted, not just the first one.
+
+---
+
+## ADR-012: Budgets are soft planning guidance, not executor kill switches
+
+**Status:** Accepted — supersedes the hard-budget portions of ADR-004 and ADR-010
+
+**Context:** Hard `budget_minutes` enforcement caused useful work to be killed mid-run, leaving otherwise salvageable branches to be finished manually. In practice, budgets are more useful as ticket-sizing guidance than as strict execution limits. The human can decide whether to split work or let an overrun continue after reviewing progress and PR scope.
+
+**Decision:** `budget_tokens` and `budget_minutes` remain parseable metadata for old tickets and optional planning notes for new tickets, but the executor does not abort solely because a ticket exceeds them. Ticket creation skills should omit `## Budget` by default and include it only when the user explicitly asks for soft sizing notes. Runtime safety continues to rely on scope checks, tests, quota-aware provider fallback, secret scanning, and human PR review.
+
+**Consequences:** Long-running tickets can finish instead of being terminated at an arbitrary minute mark. Operators must use judgment when a ticket is clearly too broad; agents should preserve coherent partial work and report overruns instead of sprawling indefinitely. Historical tickets with `## Budget` sections still parse, but those values are informational.

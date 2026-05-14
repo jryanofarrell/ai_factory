@@ -50,7 +50,7 @@ Produce a single JSON object (no markdown fences, no other text) with exactly th
   "title": "<short imperative title, max 70 chars>",
   "description_markdown": "<full markdown description with sections: ## Acceptance Criteria
   (required, bulleted, testable), ## Scope Paths (optional, one glob per line),
-  ## Budget (optional, tokens: N / minutes: N), ## Notes (optional)>",
+  ## Budget (optional soft sizing only, tokens: N / minutes: N), ## Notes (optional)>",
   "scope_paths": ["<glob>", ...],
   "budget_tokens": <integer, default 10000 for small tasks>,
   "budget_minutes": <integer, default 5 for small tasks>,
@@ -60,8 +60,8 @@ Produce a single JSON object (no markdown fences, no other text) with exactly th
 Rules:
 - Acceptance criteria must be testable and specific.
 - scope_paths should be the smallest plausible set of files.
-- budget_tokens / budget_minutes should reflect task complexity
-  (small: 10000/5, medium: 30000/15, large: 50000/30).
+- budget_tokens / budget_minutes are soft estimates only. Omit the Budget section unless
+  the user explicitly asked for sizing notes.
 - Output ONLY the JSON object. No prose before or after.
 
 ## One-shot example output
@@ -276,7 +276,7 @@ def _confirm(result: IdeateResult) -> IdeateResult | None:
     print("\n" + "─" * 60)
     print(f"Title:         {result.title}")
     print(f"Scope paths:   {', '.join(result.scope_paths) or '(none)'}")
-    print(f"Budget:        {result.budget_tokens} tokens / {result.budget_minutes} min")
+    print(f"Soft estimate: {result.budget_tokens} tokens / {result.budget_minutes} min")
     print("\nAcceptance criteria (from description):")
     for line in result.description_markdown.splitlines():
         if line.strip().startswith("-"):
@@ -333,8 +333,5 @@ def _build_description(result: IdeateResult, repo_key: str) -> str:
 
     if result.scope_paths and "## Scope Paths" not in desc:
         desc += "\n\n## Scope Paths\n\n" + "\n".join(result.scope_paths)
-
-    if (result.budget_tokens != 10000 or result.budget_minutes != 5) and "## Budget" not in desc:
-        desc += f"\n\n## Budget\n\ntokens: {result.budget_tokens}\nminutes: {result.budget_minutes}"
 
     return desc

@@ -44,8 +44,8 @@ This is a hello-world ticket to verify the executor pipeline works.
 | `title` | string | Yes | `issue.title` | Human-readable title. Used in the branch name and PR title. |
 | `target_repo` | string | Yes | `issue.target_repo` custom field, or derived from `issue.team.key` → manifest lookup | Key into `manifest.yaml`'s `repos` map. Tells the executor which local repo to operate in. |
 | `scope_paths` | list of strings | No | `issue.scope_paths` custom field (one glob per line → parsed into list) | Glob patterns restricting which files the executor may modify. If absent, no scope restriction applies. Enforced in Phase 4. |
-| `budget_tokens` | integer | No | `issue.budget_tokens` custom field | Maximum Claude API tokens for this run. If absent, the executor uses the manifest default (50 000). Enforced in Phase 4. |
-| `budget_minutes` | integer | No | `issue.budget_minutes` custom field | Maximum wall-clock minutes for this run. If absent, the executor uses the manifest default (30). Enforced in Phase 4. |
+| `budget_tokens` | integer | No | `## Budget` section, if present | Soft token estimate for planning. The executor does not abort solely because this value is exceeded. |
+| `budget_minutes` | integer | No | `## Budget` section, if present | Soft time estimate for planning. The executor does not abort solely because this value is exceeded. |
 | `linear_url` | string | No | `issue.url` | Full URL to the Linear issue. Populated automatically by the Phase 2 pull step. Absent on hand-written tickets. Used by the write-back step (Phase 3) to post the PR link as a comment. |
 
 ## Body sections
@@ -68,8 +68,8 @@ Free-form context for the executor. Background information, constraints, hints, 
 | `title` | `issue.title` | Standard Linear field |
 | `target_repo` | `target_repo` custom property | Derived from team if absent |
 | `scope_paths` | `scope_paths` custom property | Multiline text → YAML list |
-| `budget_tokens` | `budget_tokens` custom property | Integer |
-| `budget_minutes` | `budget_minutes` custom property | Integer |
+| `budget_tokens` | `## Budget` body section | Integer, soft estimate |
+| `budget_minutes` | `## Budget` body section | Integer, soft estimate |
 | `linear_url` | `issue.url` | Populated by pull step; absent on hand-written tickets |
 | Acceptance criteria body | `acceptance_criteria` custom property | Multiline text → Markdown section |
 | Notes body | `issue.description` | Remaining description content |

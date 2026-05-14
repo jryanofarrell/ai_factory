@@ -41,7 +41,11 @@ Read `.ai/rules/factory.md` before writing any code. These always apply.
 5. **When the right shape of a thing is unclear, read `docs/DECISIONS.md` first.** Many patterns that look like open questions have already been settled there.
 
 ## Target repositories
-Projects that the factory manages live under `repos/`. Each project has its own `CLAUDE.md` and may have its own memory files. **Before doing any work related to a target project — including ideation, ticketing, or code changes — read that project's `CLAUDE.md` and any relevant memory files first.** Do not assume conventions from `ai_factory` apply to target projects.
+Projects that the factory manages live under `repos/` (e.g. `repos/thms-platform/`). **This is the canonical working copy** — the executor checks out the active ticket's branch here, and any code changes for a target project must happen in this path. The user may have other clones of the same repo elsewhere on disk (e.g. `~/thms-platform/`); ignore those — they will be on unrelated branches and edits there won't reach the PR.
+
+Each project has its own `CLAUDE.md` and may have its own memory files. **Before doing any work related to a target project — including ideation, ticketing, or code changes — read that project's `CLAUDE.md` (at `repos/<project>/CLAUDE.md`) and any relevant memory files first.** Do not assume conventions from `ai_factory` apply to target projects.
+
+Before editing inside a target repo, run `git -C repos/<project> branch --show-current` and `git -C repos/<project> status -s` to confirm you're on the expected ticket branch with a clean state.
 
 ## Skills
 
