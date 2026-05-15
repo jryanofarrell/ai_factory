@@ -405,11 +405,15 @@ def _scope_violations(local_path: Path, ticket: Ticket) -> list[str]:
     """Return changed files outside the ticket scope, with factory memory always allowed."""
     if not ticket.scope_paths:
         return []
+    # Always-allowed: memory files and auto-generated build artifacts that
+    # are side-effects of running tsc / Next.js, never intentionally edited.
     always_allowed = (".claude/memory/",)
+    always_allowed_suffixes = (".tsbuildinfo", "next-env.d.ts")
     return [
         f
         for f in check_scope(local_path, ticket.scope_paths)
         if not any(f.startswith(prefix) for prefix in always_allowed)
+        and not any(f.endswith(suffix) for suffix in always_allowed_suffixes)
     ]
 
 
