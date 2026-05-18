@@ -273,6 +273,59 @@ def pull_tickets(
 
 
 @app.command()
+def address_pr_comments(
+    repo: str = typer.Option(..., "--repo", help="Repo key from manifest.yaml."),
+    pr: int = typer.Option(..., "--pr", help="Pull request number to inspect."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help="Optional local branch to create from the PR head before addressing comments.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Run the executor but skip committing and pushing code changes."
+    ),
+    manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml."),
+) -> None:
+    """Address GitHub PR comments with the configured executor."""
+    from .manifest import load_manifest
+    from .pr_comments import address_pr_comments as _address
+    from .quota_tracker import QuotaTracker
+
+    try:
+        m = load_manifest(manifest)
+        if repo not in m.repos:
+            typer.echo(f"Error: repo '{repo}' not in manifest", err=True)
+            raise typer.Exit(1)
+
+        base_dir = (manifest or Path("manifest.yaml")).resolve().parent
+        quota_tracker = QuotaTracker(
+            state_file=base_dir / ".factory" / "quota_state.json",
+            reset_hours=m.quota_reset_hours or None,
+        )
+        result = _address(
+            repo=m.repos[repo],
+            pr_number=pr,
+            providers=m.executor_providers,
+            quota_tracker=quota_tracker,
+            max_utilization=m.max_utilization,
+            branch=branch,
+            dry_run=dry_run,
+        )
+        if result.committed:
+            typer.echo(
+                f"Committed and pushed `{result.commit_message}` to {result.branch} "
+                f"for {result.pr_url}."
+            )
+        elif result.files_changed:
+            typer.echo(f"Dry run complete; changed files: {', '.join(result.files_changed)}")
+        else:
+            typer.echo(f"No code changes to push for {result.pr_url}.")
+    except (ValueError, FileNotFoundError, RuntimeError) as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
 def run_ticket(
     ticket_file: Path = typer.Argument(..., help="Path to the ticket markdown file."),
     repo: str = typer.Option(..., "--repo", help="Repo key from manifest.yaml."),
