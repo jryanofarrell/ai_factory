@@ -1,14 +1,14 @@
 # Ticket spec
 
-This document defines the on-disk ticket format consumed by the executor. Tickets are Markdown files with YAML frontmatter. This format is the contract between the Linear pull step (Phase 2) and the executor (Phase 1).
+This document defines the Markdown ticket format used for local testing, snapshots, and explicit `--no-pull` runs. Normal `factory run` execution pulls Ready For AI issues from Linear and executes those parsed tickets directly; stale local files are not authoritative.
 
-Defining the format in Phase 0 anchors both ends: Phase 1 builds an executor that reads this format, and Phase 2 builds a pull step that writes it. Neither phase needs to coordinate on format details.
+Defining the format in Phase 0 anchored both ends: Phase 1 built an executor that reads this format, and Phase 2 built a pull step that writes it. Current normal runs use Linear as the source of truth and keep this format as a debug/offline contract.
 
 ## File location
 
 Tickets live in a queue directory inside the `ai_factory` repo:
 - `examples/tickets/` — hand-written tickets for local testing (committed)
-- `.factory/queue/` — tickets written by the Linear pull step at run time (gitignored, created by Phase 2; path configurable via `queue_dir` in `manifest.yaml`)
+- `.factory/queue/` — optional ticket snapshots written by `factory pull-tickets` and explicit `factory run --no-pull` inputs (gitignored; path configurable via `queue_dir` in `manifest.yaml`)
 
 ## Format
 

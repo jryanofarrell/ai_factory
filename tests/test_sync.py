@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from factory.manifest import Manifest, RepoConfig
-from factory.sync import _hash, _issue_to_ticket
+from factory.sync import _hash, _issue_to_ticket, pull_tickets
 
 # Fixture capturing real Linear API response shape (from Phase 2 spike)
 FIXTURE_ISSUE = {
@@ -109,3 +109,38 @@ def test_idempotency_hash():
     content = "same content"
     assert _hash(content) == _hash(content)
     assert _hash(content) != _hash("different content")
+
+
+def test_pull_tickets_can_return_ready_tickets_without_writing_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "queue_dir: .factory/queue",
+                "repos:",
+                "  thms-platform:",
+                "    github: toms-hms/thms-platform",
+                "    default_branch: main",
+                "    linear_team: THM",
+            ]
+        )
+    )
+
+    class FakeLinearClient:
+        def __init__(self, api_key: str) -> None:
+            self.api_key = api_key
+
+        def get_ready_issues(self, team_key: str) -> list[dict]:
+            assert team_key == "THM"
+            return [FIXTURE_ISSUE]
+
+    monkeypatch.setattr("factory.sync.LinearClient", FakeLinearClient)
+
+    result = pull_tickets(manifest_path=manifest_path, api_key="test", write_files=False)
+
+    assert [ticket.id for ticket in result.tickets] == ["THM-5"]
+    assert result.written == ["THM-5"]
+    assert not (tmp_path / ".factory" / "queue" / "thm-5.md").exists()

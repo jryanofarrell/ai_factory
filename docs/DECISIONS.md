@@ -217,3 +217,15 @@ Bootstrapping and re-audit are handled by the `/ai-files` slash command (`.claud
 `.ai/skills/<area>/<task>.md` files are added incrementally as patterns repeat, not pre-scaffolded as empty stubs.
 
 **Consequences:** New target repos can be onboarded with a single command, with content drawn from actual code rather than placeholders. Both providers see the same context — no provider-specific drift. The `/ticket` skill already scans `.ai/skills/` and pins relevant skill paths into each ticket description, so once a repo's skills tree grows, the ticket flow automatically picks up the new guidance. The convention is enforced at the command level rather than as a hard runtime check; a repo without the layout is not blocked from being worked on, but the factory's quality will degrade without it.
+
+---
+
+## ADR-014: Linear-ready tickets are authoritative for normal runs
+
+**Status:** Accepted — supersedes the runtime authority portion of ADR-008
+
+**Context:** ADR-008 introduced on-disk Markdown tickets as the contract between Linear and the executor. That made the executor easy to test and made pulled tickets inspectable, but it also created a stale second source of truth: a ticket file left in `.factory/queue/` could be executed even after the Linear issue had moved out of Ready For AI.
+
+**Decision:** For normal `factory run` execution, Linear is authoritative. The run command pulls current Ready For AI issues and executes only the `Ticket` objects returned by that pull. It does not execute pre-existing `.factory/queue/*.md` files. The `pull-tickets` command may still write Markdown snapshots for inspection, and `factory run --no-pull` remains the explicit offline/manual mode that executes local queue files.
+
+**Consequences:** A stale local ticket file cannot cause completed or non-ready Linear work to run again. Operators who need offline/manual reruns can still opt into local-file execution with `--no-pull`. The executor remains testable with hand-written ticket files via `factory run-ticket` and the local queue mode, but the default path now matches the architecture: Linear decides what is runnable.
