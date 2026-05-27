@@ -47,6 +47,6 @@ Each project has its own `CLAUDE.md` and may have its own memory files. **Before
 
 Before editing inside a target repo, run `git -C repos/<project> branch --show-current` and `git -C repos/<project> status -s` to confirm you're on the expected ticket branch with a clean state.
 
-## Skills
+## Slash commands
 
-Factory-level reusable skills live under `.claude/skills/`. See `.claude/skills/README.md` for the index and conventions.
+Factory-level workflows live in `.claude/commands/` as slash commands (`/ideate`, `/ticket`, `/run`). They are user-triggered — Claude does not auto-invoke them. If a genuinely auto-invokable capability is ever needed, add it under `.claude/skills/<name>/SKILL.md` (separate from commands).
