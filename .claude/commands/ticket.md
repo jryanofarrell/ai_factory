@@ -8,16 +8,23 @@ Read the current conversation (ideally one that followed `/ideate`) and turn it 
 
 ### Step 1 — Draft tickets from conversation
 
-Read the full conversation so far. Identify every distinct unit of work discussed. For each, produce a ticket draft with:
+Read the full conversation so far. Identify every distinct unit of work discussed. For each, draft a ticket with these sections:
 
-- **title** — short imperative, max 70 chars
-- **acceptance_criteria** — bulleted list, each criterion specific and testable
-- **scope_paths** — list of glob patterns for files that may be touched (e.g. `apps/api/src/**`, `CHANGELOG.md`). Use your best judgment from the discussion; leave empty if truly unclear.
+- **title** — short imperative, max 70 chars.
 - **target_repo** — the repo key from `manifest.yaml` (e.g. `thms-platform`). If not discussed, ask.
+- **Context** — what currently exists in the codebase, what this ticket changes, and why it exists now. Reference earlier tickets or system state where relevant. Give the executor enough background to make local judgment calls without relitigating settled decisions.
+- **Plan** — concrete step-by-step implementation outline, file-by-file when useful. Include sample shapes (model fields, function signatures, route specs) where they sharpen intent. Not pseudocode for everything — enough that the order, the file paths, and the interfaces are clear.
+- **Design decisions** — for each non-obvious choice, state the decision and the alternative that was considered and rejected, and why. This is the durable record of *why* the code looks the way it does. The executor and the human reviewer both read this.
+- **Acceptance Criteria** — bulleted list, each criterion specific and testable. This is what the PR must satisfy.
+- **Scope Paths** — list of glob patterns for files that may be touched (e.g. `apps/api/src/**`, `CHANGELOG.md`). Use your best judgment from the discussion; leave empty if truly unclear.
+- **Depends On** (optional) — list of ticket IDs (e.g. `HEL-3`) that must merge before this ticket can start. Empty for the first ticket in a chain. Future executor behavior: refuse to start a ticket whose dependencies are not merged. Today the human still gatekeeps by promoting to "Ready For AI" in dependency order — the convention captures intent so the factory can enforce it later without rewriting tickets.
+- **Notes** (optional) — walkthrough angles, gotchas, executor cautions. Things that don't fit above but the executor or reviewer should see.
 
 Budgets are soft planning notes only. Do not include a Budget section unless the user explicitly asks for one.
 
-If the discussion covered one cohesive piece of work, produce one ticket. If it covered multiple distinct deliverables, produce one ticket per deliverable.
+If the discussion covered one cohesive piece of work, produce one ticket. If it covered multiple distinct deliverables, produce one ticket per deliverable. When tickets build on each other, declare the dependency explicitly via `Depends On`.
+
+**The detail level matters.** `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria` are not optional — every ticket needs them. A ticket that reads as "do X" without explaining why X looks the way it does forces the executor to relitigate every choice and gives the human reviewer nothing to defend in a walkthrough. Be substantive — the goal is a self-contained planning doc, not a checklist.
 
 ### Step 2 — Select relevant skills
 
@@ -35,23 +42,44 @@ If no skills directory exists for the target repo, skip this step.
 
 ### Step 3 — Display for review
 
-Print each proposed ticket clearly:
+Print each proposed ticket as the full markdown body that will be sent to Linear, prefaced by a short header so the user can scan repo, scope, and dependencies at a glance:
 
 ```
-────────────────────────────────────────────────
+════════════════════════════════════════════════════════════════════
 Ticket 1 of N
-Title:    <title>
-Repo:     <target_repo>
-Scope:    <scope_paths or "(none specified)">
-Skills:   <skill paths or "(none)">
+Title:       <title>
+Repo:        <target_repo>
+Scope:       <scope paths, one per line or comma-separated>
+Depends On:  <ticket IDs or "(none)">
+Skills:      <skill paths or "(none)">
+════════════════════════════════════════════════════════════════════
 
-Acceptance Criteria:
-  - <criterion 1>
-  - <criterion 2>
-────────────────────────────────────────────────
+## Context
+
+<context paragraphs>
+
+## Plan
+
+<numbered steps with file paths and concrete details>
+
+## Design decisions
+
+<for each non-obvious choice: decision, alternative rejected, why>
+
+## Acceptance Criteria
+
+- <criterion 1>
+- <criterion 2>
+
+## Notes
+
+<walkthrough angles, gotchas>
 ```
+
+The body shown here must be exactly the body that will be sent to `factory create-issue` — the user is approving the final content, not a summary.
 
 Then ask:
+
 ```
 Create these N ticket(s) in Linear? [y/N]
 ```
@@ -83,15 +111,29 @@ Created N ticket(s). Open them in Linear, review, and mark "Ready For AI" when y
 ## Rules
 
 - **Never create tickets in "Ready For AI" state.** Backlog only. The human promotes.
-- **Never create tickets without confirmation.** Always show the full proposed ticket before calling `create-issue`.
+- **Never create tickets without confirmation.** Always show the full proposed ticket body (the exact markdown that will be sent to `create-issue`) before calling it.
 - **One unit of work per ticket.** If a ticket is too big to stay coherent, split it and say why.
 - **If target_repo is ambiguous**, ask before drafting. Don't guess.
+- **Always include `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria`.** They are not optional. If those sections would be thin because the conversation didn't establish enough, gather more context (run `/ideate` or ask the user directly) before drafting — do not pad with generic prose.
+- **Declare dependencies explicitly.** If ticket B requires ticket A's changes to land first, B's `Depends On` must list A's ID. Sequential implementation does not imply dependency — only declare it when the work cannot start without the prior ticket merged.
 
 ## Description format
 
-The description passed to `create-issue` must contain these sections so `factory pull-tickets` can parse it:
+The description passed to `create-issue` is structured Markdown. Some sections are parsed by `factory pull-tickets` (per ADR-010); the rest are human / executor-facing context that the factory does not parse but the executor reads as part of the ticket prompt:
 
 ```markdown
+## Context
+
+<short paragraphs covering what exists, what this ticket changes, and why it exists now>
+
+## Plan
+
+<numbered, file-by-file implementation steps with sample shapes where useful>
+
+## Design decisions
+
+<for each non-obvious choice: decision, alternative rejected, rationale>
+
 ## Acceptance Criteria
 
 - <criterion 1>
@@ -102,14 +144,27 @@ The description passed to `create-issue` must contain these sections so `factory
 <glob pattern>
 <glob pattern>
 
+## Depends On
+
+<ticket-id>
+<ticket-id>
+
 ## Skills
 
 .ai/skills/api/route.md
 .ai/skills/api/schema.md
+
+## Notes
+
+<walkthrough angles, executor cautions, gotchas>
 
 ## Target Repo
 
 <repo_key>
 ```
 
-Only include `## Scope Paths` if scope paths are known. Only include `## Skills` if skills were identified. Only include `## Budget` if the user explicitly asked for soft sizing notes.
+**Parsed by the factory** (per ADR-010 + the `Depends On` convention added here): `Acceptance Criteria` (required), `Scope Paths`, `Depends On`, `Skills`, `Notes`, `Target Repo`, `Budget`.
+
+**Executor-facing context, not parsed**: `Context`, `Plan`, `Design decisions`.
+
+Always include `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria`. Include `Scope Paths` when known (usually). Include `Depends On` when a dependency exists. Include `Skills` only if the target repo has a `.ai/skills/` directory and relevant skills were identified in Step 2. Include `Notes` when there's additional context worth surfacing. Include `Budget` only if the user explicitly asked for soft sizing notes.
