@@ -187,3 +187,33 @@ These risks were identified during the design conversation but are not turned in
 **Decision:** `budget_tokens` and `budget_minutes` remain parseable metadata for old tickets and optional planning notes for new tickets, but the executor does not abort solely because a ticket exceeds them. Ticket creation skills should omit `## Budget` by default and include it only when the user explicitly asks for soft sizing notes. Runtime safety continues to rely on scope checks, tests, quota-aware provider fallback, secret scanning, and human PR review.
 
 **Consequences:** Long-running tickets can finish instead of being terminated at an arbitrary minute mark. Operators must use judgment when a ticket is clearly too broad; agents should preserve coherent partial work and report overruns instead of sprawling indefinitely. Historical tickets with `## Budget` sections still parse, but those values are informational.
+
+---
+
+## ADR-013: Canonical AI file layout in target repositories
+
+**Status:** Accepted
+
+**Context:** Each target repository needs AI-readable files for both Claude Code and Codex CLI agents (the factory uses both — see ADR-011) to work productively: rules, codebase context, and procedural how-to guides. Without a shared convention, every repo ends up with ad-hoc files in different locations and the executor cannot rely on finding context where it expects it. Both providers need their own auto-loaded pointer file at the repo root (Claude Code reads `CLAUDE.md`, Codex CLI reads `AGENTS.md`), but the substantive content should live in one shared tree to avoid duplication and drift between providers.
+
+**Decision:** Every target repository follows a single canonical AI file layout:
+
+```
+<repo-root>/
+  CLAUDE.md          - Claude Code pointer, auto-loaded
+  AGENTS.md          - Codex CLI pointer, auto-loaded
+  .ai/
+    rules/core.md       - always-applicable constraints
+    context/<area>.md   - codebase snapshot per area, loaded on demand
+    skills/
+      ai-structure.md   - map of the .ai/ layout
+      <area>/<task>.md  - procedural how-to guides, added incrementally
+```
+
+`CLAUDE.md` and `AGENTS.md` carry identical bodies and both point at the same `.ai/` tree. Per-ticket work updates the relevant `.ai/context/<area>.md` as part of its scope so the context stays fresh rather than rotting.
+
+Bootstrapping and re-audit are handled by the `/ai-files` slash command (`.claude/commands/ai-files.md` in this repo). The factory's first action when entering a target repo missing these files is to invoke `/ai-files`. The command populates content by reading actual code, never with TODO stubs.
+
+`.ai/skills/<area>/<task>.md` files are added incrementally as patterns repeat, not pre-scaffolded as empty stubs.
+
+**Consequences:** New target repos can be onboarded with a single command, with content drawn from actual code rather than placeholders. Both providers see the same context — no provider-specific drift. The `/ticket` skill already scans `.ai/skills/` and pins relevant skill paths into each ticket description, so once a repo's skills tree grows, the ticket flow automatically picks up the new guidance. The convention is enforced at the command level rather than as a hard runtime check; a repo without the layout is not blocked from being worked on, but the factory's quality will degrade without it.

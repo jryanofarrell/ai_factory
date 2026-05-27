@@ -47,6 +47,8 @@ Each project has its own `CLAUDE.md` and may have its own memory files. **Before
 
 Before editing inside a target repo, run `git -C repos/<project> branch --show-current` and `git -C repos/<project> status -s` to confirm you're on the expected ticket branch with a clean state.
 
+**Canonical AI file layout in target repos.** Every target repo should have `CLAUDE.md`, `AGENTS.md`, and a `.ai/` tree (`rules/core.md`, `context/<area>.md`, `skills/ai-structure.md`). Both `CLAUDE.md` and `AGENTS.md` point at the same `.ai/` content. If a target repo is missing these files, the first action is to invoke `/ai-files` to bootstrap them with content drawn from the actual code. Per-ticket work keeps `.ai/context/<area>.md` fresh by updating it alongside the code changes. See ADR-013.
+
 ## Slash commands
 
-Factory-level workflows live in `.claude/commands/` as slash commands (`/ideate`, `/ticket`, `/run`). They are user-triggered — Claude does not auto-invoke them. If a genuinely auto-invokable capability is ever needed, add it under `.claude/skills/<name>/SKILL.md` (separate from commands).
+Factory-level workflows live in `.claude/commands/` as slash commands (`/ideate`, `/ticket`, `/run`, `/ai-files`). They are user-triggered — Claude does not auto-invoke them. If a genuinely auto-invokable capability is ever needed, add it under `.claude/skills/<name>/SKILL.md` (separate from commands).
