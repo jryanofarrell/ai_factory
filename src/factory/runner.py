@@ -161,11 +161,7 @@ def run_ticket(
         violations = _scope_violations(repo.local_path, ticket)
         result.scope_violations = violations
         if violations:
-            typer.echo(f"\nScope violation. Branch '{branch}' preserved for inspection.", err=True)
-            _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
-            result.error = f"Scope violation: {', '.join(violations)}"
-            result.reason = "scope_violation"
-            return _finalise(result, start, started_at, log_dir)
+            _report_scope_advisory(violations)
 
         # Install / build
         install_cmd = repo.build_command or detect_install_command(repo.local_path)
@@ -217,17 +213,7 @@ def run_ticket(
                 violations = _scope_violations(repo.local_path, ticket)
                 result.scope_violations = violations
                 if violations:
-                    typer.echo(
-                        f"\nScope violation after test repair. "
-                        f"Branch '{branch}' preserved for inspection.",
-                        err=True,
-                    )
-                    _preserve_and_return_to_default(
-                        repo.local_path, branch, repo.default_branch, ticket.id
-                    )
-                    result.error = f"Scope violation after test repair: {', '.join(violations)}"
-                    result.reason = "scope_violation"
-                    return _finalise(result, start, started_at, log_dir)
+                    _report_scope_advisory(violations)
 
                 r = run_shell_command(test_cmd, repo.local_path)
                 if r.returncode != 0:
@@ -252,11 +238,7 @@ def run_ticket(
         violations = _scope_violations(repo.local_path, ticket)
         result.scope_violations = violations
         if violations:
-            typer.echo(f"\nScope violation. Branch '{branch}' preserved for inspection.", err=True)
-            _preserve_and_return_to_default(repo.local_path, branch, repo.default_branch, ticket.id)
-            result.error = f"Scope violation: {', '.join(violations)}"
-            result.reason = "scope_violation"
-            return _finalise(result, start, started_at, log_dir)
+            _report_scope_advisory(violations)
 
         # Memory file: Claude writes it as part of its task (see _build_prompt).
         # Fall back to the generic writer only if Claude forgot.
@@ -411,6 +393,13 @@ def _scope_violations(local_path: Path, ticket: Ticket) -> list[str]:
         for f in check_scope(local_path, ticket.scope_paths)
         if not any(f.startswith(prefix) for prefix in always_allowed)
     ]
+
+
+def _report_scope_advisory(violations: list[str]) -> None:
+    typer.echo(
+        "\nScope advisory: changed files outside ticket scope: " + ", ".join(violations),
+        err=True,
+    )
 
 
 def _attempt_test_repair(

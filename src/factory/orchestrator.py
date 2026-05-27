@@ -170,6 +170,8 @@ def run(
             record["branch"] = result.branch
         if result.error:
             record["reason"] = result.error
+        if result.scope_violations:
+            record["scope_advisory"] = result.scope_violations
         batch["tickets"][ticket.id] = record
         _save_batch(batch_file, batch)
 
@@ -223,6 +225,7 @@ def _write_back(client: LinearClient, ticket, team_key: str, result: RunResult) 
             dur = _fmt_duration(result.duration_s)
             cost = f"${result.cost_usd:.2f}" if result.cost_usd is not None else "n/a"
             body = f"PR opened: {result.pr_url}\nDuration: {dur} · Cost: {cost}"
+            body += _scope_advisory_comment(result)
             client.comment_on_issue(ticket.linear_id, body)
             state_id = client.get_state_id(team_key, "In Review")
             if state_id:
@@ -235,6 +238,7 @@ def _write_back(client: LinearClient, ticket, team_key: str, result: RunResult) 
                 f"Reason: {result.reason}\n"
                 f"Duration: {dur}{branch_note}"
             )
+            body += _scope_advisory_comment(result)
             client.comment_on_issue(ticket.linear_id, body)
             state_id = client.get_state_id(team_key, "Failed for Agent")
             if state_id:
@@ -263,11 +267,20 @@ def _print_summary(results: list[RunResult], batch_file: Path, dry_run: bool) ->
             typer.echo(f"  ✓ {r.ticket_id} → {target} {suffix}")
         else:
             typer.echo(f"  ✗ {r.ticket_id} → FAILED: {r.error} {suffix}")
+        if r.scope_violations:
+            typer.echo(f"    Scope advisory: {', '.join(r.scope_violations)}")
 
     total_s = sum(r.duration_s for r in results)
     total_cost = sum(r.cost_usd for r in results if r.cost_usd is not None)
     typer.echo(f"Total: {_fmt_duration(total_s)}" + (f", ${total_cost:.2f}" if total_cost else ""))
     typer.echo(f"Batch log: {batch_file}")
+
+
+def _scope_advisory_comment(result: RunResult) -> str:
+    if not result.scope_violations:
+        return ""
+    files = "\n".join(f"- `{path}`" for path in result.scope_violations)
+    return f"\n\nScope advisory: changed files outside ticket scope:\n{files}"
 
 
 def _save_batch(path: Path, batch: dict) -> None:
