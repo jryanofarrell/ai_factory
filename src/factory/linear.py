@@ -9,7 +9,8 @@
 #   Verify in Linear → Settings → Teams before adding a repo to the manifest.
 # - Triggering is via the "Ready For AI" label (not a workflow state) — Linear's
 #   workflow state settings UI did not expose an "Add state" option in testing.
-#   The label was created via the API (issueLabelCreate mutation, team THM).
+#   The label is created via `factory setup-team --repo <key>` (which calls the
+#   issueLabelCreate mutation idempotently). Run once per new team.
 # - Issue fields available: identifier, title, description, url, state.name,
 #   team.key, labels.nodes.name. No custom property access.
 
@@ -202,6 +203,23 @@ class LinearClient:
             {"id": issue_id, "title": title, "description": description},
         )
         return data["issueUpdate"]["issue"]
+
+    def create_label(self, team_id: str, name: str) -> str:
+        data = self._query(
+            """
+            mutation($teamId: String!, $name: String!) {
+              issueLabelCreate(input: { teamId: $teamId, name: $name }) {
+                success
+                issueLabel { id name }
+              }
+            }
+            """,
+            {"teamId": team_id, "name": name},
+        )
+        result = data["issueLabelCreate"]
+        if not result["success"]:
+            raise LinearError(f"Failed to create label '{name}' on team {team_id}")
+        return result["issueLabel"]["id"]
 
     def apply_label(self, issue_id: str, label_id: str) -> None:
         self._query(

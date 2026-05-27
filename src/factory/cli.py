@@ -121,6 +121,51 @@ def create_issue(
 
 
 @app.command()
+def setup_team(
+    repo: str = typer.Option(..., "--repo", help="Repo key from manifest.yaml."),
+    manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml."),
+) -> None:
+    """Ensure a repo's Linear team has the 'Ready For AI' label. Idempotent — safe to re-run."""
+    import os
+
+    from dotenv import load_dotenv
+
+    from .linear import READY_LABEL, LinearClient
+    from .manifest import load_manifest
+
+    load_dotenv()
+    api_key = os.environ.get("LINEAR_API_KEY")
+    if not api_key:
+        typer.echo("Error: LINEAR_API_KEY not set in .env", err=True)
+        raise typer.Exit(1)
+
+    m = load_manifest(manifest)
+    if repo not in m.repos:
+        typer.echo(f"Error: repo '{repo}' not in manifest", err=True)
+        raise typer.Exit(1)
+
+    team_key = m.repos[repo].linear_team or repo.upper()
+
+    client = LinearClient(api_key)
+    team_id = client.get_team_id(team_key)
+    if not team_id:
+        typer.echo(
+            f"Error: team '{team_key}' not found in Linear. "
+            f"Create the team in Linear → Settings → Teams first.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    existing = client.get_label_id(team_key, READY_LABEL)
+    if existing:
+        typer.echo(f"Team {team_key}: '{READY_LABEL}' label already exists (id={existing}).")
+        return
+
+    label_id = client.create_label(team_id=team_id, name=READY_LABEL)
+    typer.echo(f"Team {team_key}: created '{READY_LABEL}' label (id={label_id}).")
+
+
+@app.command()
 def update_issue(
     identifier: str = typer.Option(
         ..., "--identifier", help="Linear issue identifier (e.g. THM-5)."
