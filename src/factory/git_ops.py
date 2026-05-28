@@ -421,35 +421,109 @@ def _extract_session_memory_files(local_path: Path, session_branches: list[str])
                 dest.write_text(content.stdout)
 
 
+def _find_open_memory_pr(local_path: Path, github: str) -> tuple[str, str] | None:
+    """Return (branch_name, pr_url) for an open factory/memory-* PR on this repo, or None."""
+    result = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            github,
+            "--state",
+            "open",
+            "--json",
+            "headRefName,url",
+            "--limit",
+            "50",
+        ],
+        cwd=local_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        prs = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    for pr in prs:
+        if pr.get("headRefName", "").startswith("factory/memory-"):
+            return (pr["headRefName"], pr["url"])
+    return None
+
+
 def create_memory_pr(
     local_path: Path,
     default_branch: str,
     github: str,
     session_branches: list[str] | None = None,
 ) -> str | None:
-    """Rebuild MEMORY.md and open a session memory PR. Returns PR URL or None if no changes.
+    """Rebuild MEMORY.md and ensure exactly one open memory PR exists for this repo.
 
-    session_branches: factory branches created this run whose memory files haven't been
-    merged to main yet. Their .claude/memory/ files are extracted before rebuilding so
-    the index reflects the full session, not just what's already on main.
+    Design intent (see .claude/commands/run.md Step 12): one memory PR per repo,
+    not one per batch. If an open factory/memory-* PR is found we update it in
+    place — check out its branch, merge the latest default branch (ticket PRs
+    don't touch MEMORY.md so this is conflict-free in normal operation), rebuild
+    the index, and push. Otherwise create a fresh branch + PR.
+
+    session_branches: factory branches created this run whose memory files haven't
+    been merged to default yet. Their .claude/memory/ files are extracted into the
+    working tree before rebuilding so the index reflects the full session.
+
+    Returns PR URL or None if no changes were needed.
     """
     import uuid
     from datetime import datetime
 
     sync_repo(local_path, github, default_branch)
 
+    existing = _find_open_memory_pr(local_path, github)
+
+    if existing is not None:
+        branch, pr_url = existing
+        result = _run(["git", "fetch", "origin", branch], cwd=local_path, stream=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"git fetch origin {branch} failed")
+        result = _run(["git", "checkout", branch], cwd=local_path, stream=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"git checkout {branch} failed")
+        result = _run(["git", "pull", "--ff-only"], cwd=local_path, stream=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"git pull --ff-only on {branch} failed")
+        # Bring in ticket commits merged to default since this branch last updated.
+        # Should be conflict-free because ticket PRs never touch MEMORY.md.
+        result = _run(
+            ["git", "merge", "--no-edit", f"origin/{default_branch}"],
+            cwd=local_path,
+            stream=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"git merge origin/{default_branch} into {branch} failed — "
+                f"resolve the conflict manually on the open memory PR."
+            )
+    else:
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        branch = f"factory/memory-{date_str}-{uuid.uuid4().hex[:8]}"
+        create_branch(local_path, branch)
+
     if session_branches:
         _extract_session_memory_files(local_path, session_branches)
 
-    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-    branch = f"factory/memory-{date_str}-{uuid.uuid4().hex[:8]}"
-    create_branch(local_path, branch)
     rebuild_memory_index(local_path)
     if not has_changes(local_path):
+        if existing is not None:
+            return pr_url
         delete_branch(local_path, branch, default_branch)
         return None
+
     commit(local_path, "chore: rebuild memory index")
     push(local_path, branch)
+
+    if existing is not None:
+        return pr_url
+
     return create_pr(
         local_path,
         title="chore: update memory index",
