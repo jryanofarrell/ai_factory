@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from factory.ticket import parse_ticket
+from factory.ticket import find_scope_skill_mismatches, parse_ticket
 
 VALID_TICKET = """\
 ---
@@ -101,3 +101,72 @@ def test_notes_optional(tmp_path: Path) -> None:
     )
     t = parse_ticket(write(tmp_path, no_notes))
     assert t.notes == ""
+
+
+def _scaffold_skills(repo_root: Path, *skills: str) -> None:
+    for rel in skills:
+        p = repo_root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("# skill\n")
+
+
+def test_scope_skill_mismatch_warns_when_skill_missing_from_scope(tmp_path: Path) -> None:
+    _scaffold_skills(tmp_path, ".ai/skills/backend/router.md")
+    desc = "## Acceptance Criteria\n\n- Thing.\n\n## Scope Paths\n\nbackend/routers/threads.py\n"
+    warnings = find_scope_skill_mismatches(desc, tmp_path)
+    assert warnings == [
+        "scope touches backend/ but .ai/skills/backend/router.md is not in Scope Paths"
+    ]
+
+
+def test_scope_skill_mismatch_silent_when_skill_listed(tmp_path: Path) -> None:
+    _scaffold_skills(tmp_path, ".ai/skills/backend/router.md")
+    desc = (
+        "## Acceptance Criteria\n\n- Thing.\n\n"
+        "## Scope Paths\n\nbackend/routers/threads.py\n.ai/skills/backend/router.md\n"
+    )
+    assert find_scope_skill_mismatches(desc, tmp_path) == []
+
+
+def test_scope_skill_mismatch_silent_when_area_not_touched(tmp_path: Path) -> None:
+    _scaffold_skills(tmp_path, ".ai/skills/backend/router.md")
+    desc = "## Acceptance Criteria\n\n- Thing.\n\n## Scope Paths\n\nfrontend/components/Foo.tsx\n"
+    assert find_scope_skill_mismatches(desc, tmp_path) == []
+
+
+def test_scope_skill_mismatch_ignores_ai_structure_and_top_level(tmp_path: Path) -> None:
+    _scaffold_skills(
+        tmp_path,
+        ".ai/skills/ai-structure.md",
+        ".ai/skills/orphan.md",
+        ".ai/skills/backend/router.md",
+    )
+    desc = "## Acceptance Criteria\n\n- Thing.\n\n## Scope Paths\n\nbackend/routers/threads.py\n"
+    warnings = find_scope_skill_mismatches(desc, tmp_path)
+    assert warnings == [
+        "scope touches backend/ but .ai/skills/backend/router.md is not in Scope Paths"
+    ]
+
+
+def test_scope_skill_mismatch_no_skills_dir(tmp_path: Path) -> None:
+    desc = "## Acceptance Criteria\n\n- Thing.\n\n## Scope Paths\n\nbackend/routers/threads.py\n"
+    assert find_scope_skill_mismatches(desc, tmp_path) == []
+
+
+def test_scope_skill_mismatch_multiple_areas(tmp_path: Path) -> None:
+    _scaffold_skills(
+        tmp_path,
+        ".ai/skills/backend/router.md",
+        ".ai/skills/backend/service.md",
+        ".ai/skills/frontend/component.md",
+    )
+    desc = (
+        "## Acceptance Criteria\n\n- Thing.\n\n"
+        "## Scope Paths\n\nbackend/routers/threads.py\nfrontend/components/Foo.tsx\n"
+        ".ai/skills/frontend/component.md\n"
+    )
+    warnings = find_scope_skill_mismatches(desc, tmp_path)
+    assert warnings == [
+        "scope touches backend/ but .ai/skills/backend/router.md is not in Scope Paths",
+        "scope touches backend/ but .ai/skills/backend/service.md is not in Scope Paths",
+    ]
