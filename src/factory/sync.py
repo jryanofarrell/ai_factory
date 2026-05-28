@@ -12,6 +12,7 @@ from .ticket import Ticket, _extract_section
 
 @dataclass
 class PullResult:
+    tickets: list[Ticket] = field(default_factory=list)
     written: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
@@ -33,6 +34,7 @@ def pull_tickets(
     team_filter: str | None = None,
     dry_run: bool = False,
     api_key: str | None = None,
+    write_files: bool = True,
 ) -> PullResult:
     manifest = load_manifest(manifest_path)
     queue_dir = Path(manifest.queue_dir)
@@ -80,10 +82,14 @@ def pull_tickets(
                 print(f"  SKIP {identifier}: {e}")
                 continue
 
+            result.tickets.append(ticket)
             content = ticket.to_markdown()
             dest = queue_dir / f"{identifier.lower()}.md"
 
-            if not dry_run:
+            if not write_files:
+                result.written.append(identifier)
+                print(f"  READY {identifier}")
+            elif not dry_run:
                 queue_dir.mkdir(parents=True, exist_ok=True)
                 if dest.exists() and _hash(dest.read_text()) == _hash(content):
                     result.skipped.append(identifier)

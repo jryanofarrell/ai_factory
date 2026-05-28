@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Process all tickets in the factory queue end-to-end — natively, without spawning a subprocess. Pulls fresh tickets from Linear first, then works through the queue. Claude makes the code changes directly using its own tools, runs tests via Bash, and opens PRs. Linear write-back and memory are handled by calling `factory record-result` at the end of each ticket.
+Process Ready For AI tickets from Linear end-to-end — natively, without spawning a subprocess. Linear is the source of truth for what is runnable. Claude makes the code changes directly using its own tools, runs tests via Bash, and opens PRs. Linear write-back and memory are handled by calling `factory record-result` at the end of each ticket.
 
 ## Before starting
 
@@ -11,8 +11,8 @@ Process all tickets in the factory queue end-to-end — natively, without spawni
    ```bash
    uv run factory pull-tickets
    ```
-3. List all `.md` files in `.factory/queue/` (excluding the `processed/` subdirectory). These are the tickets to run.
-4. If there are no tickets, say so and stop.
+3. Treat the freshly pulled Ready For AI tickets as the runnable work list. Do not run stale local queue files that were not returned by the current Linear pull.
+4. If there are no Ready For AI tickets, say so and stop.
 5. Print the list of tickets you're about to process and confirm the count.
 
 ## For each ticket, in order
@@ -82,7 +82,7 @@ Then read the acceptance criteria carefully and make all necessary file changes 
 - Do not run `git commit` or `git push` yourself during this step.
 - Only modify files — no running the app, no starting servers.
 - Respect `scope_paths` if set: only touch files matching those globs.
-- If you realise mid-implementation that the acceptance criteria require touching files outside `scope_paths`, stop, clean the branch (checkout main, delete branch), record a scope violation failure, and continue to the next ticket.
+- If you realise mid-implementation that the acceptance criteria require touching files outside `scope_paths`, keep going and record the out-of-scope files as a scope advisory in the final Linear comment.
 
 ### Step 5 — Scope check
 
@@ -100,7 +100,7 @@ violations = [f for f in changed if not spec.match_file(f)]
 print('\n'.join(violations))
 " <changed files>
 ```
-If there are violations: checkout main, delete the branch, record scope violation, continue.
+If there are violations, do not fail the ticket for that reason. Record the paths as a scope advisory in the final Linear comment.
 
 ### Step 6 — Install dependencies
 

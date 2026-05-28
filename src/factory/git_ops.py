@@ -176,7 +176,7 @@ def has_changes(local_path: Path) -> bool:
 
 def get_changed_files(local_path: Path) -> list[str]:
     result = subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "-uall"],
         cwd=local_path,
         capture_output=True,
         text=True,
