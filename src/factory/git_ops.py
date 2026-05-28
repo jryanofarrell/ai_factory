@@ -459,17 +459,22 @@ def create_memory_pr(
     github: str,
     session_branches: list[str] | None = None,
 ) -> str | None:
-    """Rebuild MEMORY.md and ensure exactly one open memory PR exists for this repo.
+    """Rebuild MEMORY.md (the memory INDEX) and ensure one open index PR per repo.
 
-    Design intent (see .claude/commands/run.md Step 12): one memory PR per repo,
-    not one per batch. If an open factory/memory-* PR is found we update it in
+    This function only handles the MEMORY.md pointer PR. Per-ticket memory files
+    (`.claude/memory/<ticket-id>_<date>.md`) ship inside their own ticket PRs, not
+    here — see .claude/commands/run.md Step 8.
+
+    Design intent (.claude/commands/run.md Step 12): one memory INDEX PR per repo,
+    not one per batch. If an open `factory/memory-*` PR is found we update it in
     place — check out its branch, merge the latest default branch (ticket PRs
     don't touch MEMORY.md so this is conflict-free in normal operation), rebuild
     the index, and push. Otherwise create a fresh branch + PR.
 
-    session_branches: factory branches created this run whose memory files haven't
-    been merged to default yet. Their .claude/memory/ files are extracted into the
-    working tree before rebuilding so the index reflects the full session.
+    session_branches: factory branches created this run whose per-ticket memory
+    files haven't been merged to default yet. Their .claude/memory/ files are
+    extracted into the working tree before rebuilding so the index reflects the
+    full session.
 
     Returns PR URL or None if no changes were needed.
     """
