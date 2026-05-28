@@ -38,6 +38,8 @@ Read the `name` and `description` frontmatter from each skill file. Based on the
 
 Example: a ticket touching `apps/api/src/**` that adds a new route would select `api/route.md`, `api/schema.md`, `api/service.md`, `api/permissioning.md`, and `api/testing.md`.
 
+**Per-file-type skill rule.** When a ticket adds or substantially modifies a file of a canonical type — model, route, service, schema, testing, seed, migrations, page, component, hook, lib, form, types (see `/ai-files` for the full list) — the matching `.ai/skills/<area>/<task>.md` must appear in **both** `## Skills` (so the executor reads it before writing) **and** `## Scope Paths` (so the executor can update the skill if the pattern evolves). If the pattern is new and no skill exists yet for that type, the ticket creates the skill as part of its own scope. Either way: every new file of a canonical type ties to its skill file.
+
 If no skills directory exists for the target repo, skip this step.
 
 ### Step 3 — Display for review
@@ -116,6 +118,7 @@ Created N ticket(s). Open them in Linear, review, and mark "Ready For AI" when y
 - **If target_repo is ambiguous**, ask before drafting. Don't guess.
 - **Always include `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria`.** They are not optional. If those sections would be thin because the conversation didn't establish enough, gather more context (run `/ideate` or ask the user directly) before drafting — do not pad with generic prose.
 - **Declare dependencies explicitly.** If ticket B requires ticket A's changes to land first, B's `Depends On` must list A's ID. Sequential implementation does not imply dependency — only declare it when the work cannot start without the prior ticket merged.
+- **Tie new files of canonical types to their skill.** Any ticket that adds or substantially modifies a file of a canonical type (model, route, service, schema, testing, seed, migrations, page, component, hook, lib, form, types) must include the matching `.ai/skills/<area>/<task>.md` in both `## Skills` and `## Scope Paths`. If no such skill exists yet, the ticket creates it. See ADR-015.
 
 ## Description format
 

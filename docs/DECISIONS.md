@@ -217,3 +217,21 @@ Bootstrapping and re-audit are handled by the `/ai-files` slash command (`.claud
 `.ai/skills/<area>/<task>.md` files are added incrementally as patterns repeat, not pre-scaffolded as empty stubs.
 
 **Consequences:** New target repos can be onboarded with a single command, with content drawn from actual code rather than placeholders. Both providers see the same context — no provider-specific drift. The `/ticket` skill already scans `.ai/skills/` and pins relevant skill paths into each ticket description, so once a repo's skills tree grows, the ticket flow automatically picks up the new guidance. The convention is enforced at the command level rather than as a hard runtime check; a repo without the layout is not blocked from being worked on, but the factory's quality will degrade without it.
+
+---
+
+## ADR-015: Per-file-type skills are scaffolded at bootstrap when a matching file exists
+
+**Status:** Accepted — supersedes the "skills added incrementally, not pre-scaffolded" portion of ADR-013
+
+**Context:** ADR-013 specified that `.ai/skills/<area>/<task>.md` files be added incrementally as patterns repeat, to avoid empty stubs polluting agent context. The Hello Patient take-home was scaffolded under that rule (HEL-1) with only `.ai/skills/ai-structure.md`. Subsequent tickets (HEL-2 added models; HEL-3 added routes/services/schemas/tests; HEL-4 added components/lib/types) each created new instances of canonical file types without any skill to read or update. The result: no enforcement of conventions across tickets, no place to record the pattern decisions made along the way, and a self-review pass (HEL-6) that retroactively had to scaffold ten skill files at once.
+
+The original concern that led to ADR-013 — empty stubs polluting context — turned out to be the wrong concern. The actual failure mode is: when a skill doesn't exist, the convention isn't documented anywhere, and the next ticket reinvents it. Empty stubs are bad; **no skill at all is worse**.
+
+**Decision:** When `/ai-files` runs on a repo, it scaffolds `.ai/skills/<area>/<task>.md` for every canonical file type that has at least one matching file already in the codebase. Skills are populated from the patterns actually in use — never with TODO stubs. The "no empty stubs" rule from ADR-013 remains in force; it's now expressed as "skip skills for absent file types," not "defer all per-file-type skills."
+
+Future tickets that add a file of a canonical type that doesn't yet have a skill create that skill as part of the ticket's own scope. The `/ticket` command enforces this: any ticket adding or substantially modifying a file of a canonical type must include the matching skill path in both `## Skills` and `## Scope Paths`.
+
+The starting set of canonical file types lives in the body of `.claude/commands/ai-files.md`. Backend types: `model`, `route`, `service`, `schema`, `testing`, `seed`, `migrations`. Frontend types: `page`, `component`, `hook`, `lib`, `form`, `types`. The list is extensible per repo when a repo uses shapes not on this list.
+
+**Consequences:** Newly bootstrapped repos get a richer, immediately-useful set of skill files. Each ticket touching a canonical file type now has a documented pattern to follow and a place to record evolution. The empty-stub concern is addressed structurally by the "at least one matching file" gate — no file type, no skill. Existing repos scaffolded under ADR-013 (currently only the Hello Patient take-home) need a one-time retroactive scaffold; see HEL-6 for that work in the take-home repo.
