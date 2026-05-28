@@ -13,7 +13,7 @@ from .manifest import load_manifest
 from .quota_tracker import QuotaTracker
 from .runner import RunResult, run_ticket
 from .sync import pull_tickets
-from .ticket import parse_ticket
+from .ticket import Ticket, parse_ticket
 
 
 def run(
@@ -59,6 +59,8 @@ def run(
                 if not deleted:
                     typer.echo(f"  {repo_key}: no stale branches.")
 
+    pulled_tickets: list[Ticket] | None = None
+
     # Step 2: pull tickets
     if not no_pull:
         if api_key is None:
@@ -66,15 +68,30 @@ def run(
                 "LINEAR_API_KEY is not set. Add it to .env to enable pull. Use --no-pull to skip."
             )
         typer.echo("Pulling tickets from Linear...")
-        pull_tickets(manifest_path=manifest_path, api_key=api_key)
+        pull_result = pull_tickets(manifest_path=manifest_path, api_key=api_key, write_files=False)
+        pulled_tickets = pull_result.tickets
 
     # Step 3: build work list
-    ticket_files = sorted(queue_dir.glob("*.md"))
-    if ticket_filter:
-        ticket_files = [f for f in ticket_files if ticket_filter.lower() in f.stem.lower()]
+    if no_pull:
+        work_items: list[tuple[Ticket | None, Path | None]] = [
+            (None, path) for path in sorted(queue_dir.glob("*.md"))
+        ]
+        if ticket_filter:
+            work_items = [
+                item for item in work_items if ticket_filter.lower() in item[1].stem.lower()
+            ]
+        empty_message = "No tickets in local queue."
+    else:
+        assert pulled_tickets is not None
+        work_items = [(ticket, None) for ticket in pulled_tickets]
+        if ticket_filter:
+            work_items = [
+                item for item in work_items if ticket_filter.lower() in item[0].id.lower()
+            ]
+        empty_message = "No ready tickets in Linear."
 
-    if not ticket_files:
-        typer.echo("No tickets in queue.")
+    if not work_items:
+        typer.echo(empty_message)
         return
 
     # Step 4: batch state
@@ -100,15 +117,20 @@ def run(
     session_branches: dict[str, list[str]] = {}
 
     # Step 5: process each ticket
-    for ticket_file in ticket_files:
+    for ticket_or_none, ticket_file in work_items:
         if interrupted:
             break
 
-        try:
-            ticket = parse_ticket(ticket_file)
-        except ValueError as e:
-            typer.echo(f"SKIP {ticket_file.name}: {e}", err=True)
-            continue
+        staging_file: Path | None = None
+        if ticket_or_none is None:
+            assert ticket_file is not None
+            try:
+                ticket = parse_ticket(ticket_file)
+            except ValueError as e:
+                typer.echo(f"SKIP {ticket_file.name}: {e}", err=True)
+                continue
+        else:
+            ticket = ticket_or_none
 
         if ticket.target_repo not in manifest.repos:
             typer.echo(
@@ -119,11 +141,12 @@ def run(
         repo = manifest.repos[ticket.target_repo]
         team_key = repo.linear_team or ticket.target_repo.upper()
 
-        # Stage the ticket before running so interruptions don't re-queue it.
-        # On success → processed/. On failure → back to queue root for retry.
-        processing_dir.mkdir(parents=True, exist_ok=True)
-        staging_file = processing_dir / ticket_file.name
-        ticket_file.rename(staging_file)
+        if ticket_file is not None:
+            # Stage local tickets before running so interruptions don't re-queue them.
+            # On success → processed/. On failure → back to queue root for retry.
+            processing_dir.mkdir(parents=True, exist_ok=True)
+            staging_file = processing_dir / ticket_file.name
+            ticket_file.rename(staging_file)
 
         typer.echo(f"\n{'─' * 60}")
         typer.echo(f"{'[DRY-RUN] ' if dry_run else ''}Running {ticket.id}: {ticket.title}")
@@ -170,6 +193,8 @@ def run(
             record["branch"] = result.branch
         if result.error:
             record["reason"] = result.error
+        if result.scope_violations:
+            record["scope_advisory"] = result.scope_violations
         batch["tickets"][ticket.id] = record
         _save_batch(batch_file, batch)
 
@@ -180,9 +205,10 @@ def run(
             successful_repos.add(ticket.target_repo)
             if result.branch:
                 session_branches.setdefault(ticket.target_repo, []).append(result.branch)
-            processed_dir.mkdir(parents=True, exist_ok=True)
-            staging_file.rename(processed_dir / staging_file.name)
-        else:
+            if staging_file is not None:
+                processed_dir.mkdir(parents=True, exist_ok=True)
+                staging_file.rename(processed_dir / staging_file.name)
+        elif staging_file is not None:
             # Return to queue root so the ticket is eligible for retry next run.
             staging_file.rename(queue_dir / staging_file.name)
 
@@ -223,6 +249,7 @@ def _write_back(client: LinearClient, ticket, team_key: str, result: RunResult) 
             dur = _fmt_duration(result.duration_s)
             cost = f"${result.cost_usd:.2f}" if result.cost_usd is not None else "n/a"
             body = f"PR opened: {result.pr_url}\nDuration: {dur} · Cost: {cost}"
+            body += _scope_advisory_comment(result)
             client.comment_on_issue(ticket.linear_id, body)
             state_id = client.get_state_id(team_key, "In Review")
             if state_id:
@@ -235,6 +262,7 @@ def _write_back(client: LinearClient, ticket, team_key: str, result: RunResult) 
                 f"Reason: {result.reason}\n"
                 f"Duration: {dur}{branch_note}"
             )
+            body += _scope_advisory_comment(result)
             client.comment_on_issue(ticket.linear_id, body)
             state_id = client.get_state_id(team_key, "Failed for Agent")
             if state_id:
@@ -263,11 +291,20 @@ def _print_summary(results: list[RunResult], batch_file: Path, dry_run: bool) ->
             typer.echo(f"  ✓ {r.ticket_id} → {target} {suffix}")
         else:
             typer.echo(f"  ✗ {r.ticket_id} → FAILED: {r.error} {suffix}")
+        if r.scope_violations:
+            typer.echo(f"    Scope advisory: {', '.join(r.scope_violations)}")
 
     total_s = sum(r.duration_s for r in results)
     total_cost = sum(r.cost_usd for r in results if r.cost_usd is not None)
     typer.echo(f"Total: {_fmt_duration(total_s)}" + (f", ${total_cost:.2f}" if total_cost else ""))
     typer.echo(f"Batch log: {batch_file}")
+
+
+def _scope_advisory_comment(result: RunResult) -> str:
+    if not result.scope_violations:
+        return ""
+    files = "\n".join(f"- `{path}`" for path in result.scope_violations)
+    return f"\n\nScope advisory: changed files outside ticket scope:\n{files}"
 
 
 def _save_batch(path: Path, batch: dict) -> None:

@@ -252,7 +252,7 @@ def version() -> None:
 @app.command()
 def run(
     no_pull: bool = typer.Option(
-        False, "--no-pull", help="Skip pulling from Linear; run queue as-is."
+        False, "--no-pull", help="Skip Linear and run local queue files as-is."
     ),
     no_cleanup: bool = typer.Option(False, "--no-cleanup", help="Skip stale branch cleanup."),
     ticket: str | None = typer.Option(

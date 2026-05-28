@@ -65,6 +65,18 @@ def test_get_changed_files(tmp_path):
     assert "README.md" in files
 
 
+def test_get_changed_files_expands_untracked_directories(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    memory_dir = repo / ".claude" / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "hel-1_2026-05-27.md").write_text("memory")
+
+    files = get_changed_files(repo)
+
+    assert ".claude/memory/hel-1_2026-05-27.md" in files
+    assert ".claude/" not in files
+
+
 def test_check_docker_returns_when_daemon_running():
     with (
         patch("factory.git_ops.shutil.which", return_value="/usr/local/bin/docker"),

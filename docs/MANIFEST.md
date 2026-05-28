@@ -26,7 +26,7 @@ repos:
 | Field | Type | Required | Default | Purpose |
 |---|---|---|---|---|
 | `version` | integer | Yes | — | Schema version. Currently `1`. The factory rejects manifests with unknown versions. |
-| `queue_dir` | string | No | `.factory/queue` | Path (relative to `ai_factory` repo root, or absolute) where the Phase 2 pull step writes ticket files. The directory is created automatically on first pull. Gitignored by default (`.factory/` is in `.gitignore`). |
+| `queue_dir` | string | No | `.factory/queue` | Path (relative to `ai_factory` repo root, or absolute) for optional ticket snapshots and explicit `factory run --no-pull` local queue runs. Gitignored by default (`.factory/` is in `.gitignore`). |
 | `repos` | map | Yes | — | Map of repo key → repo config. The key is a short identifier used to reference the repo in CLI commands and logs. By convention it matches the repository name (without the owner prefix). |
 
 ## Per-repo fields

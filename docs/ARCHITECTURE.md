@@ -24,11 +24,11 @@
   ┌─────────────────────────────────────────────────────────────────┐
   │  ai_factory (control plane)                                     │
   │                                                                 │
-  │  4. Pull step: read ticket from Linear → write to disk          │
+  │  4. Pull step: read Ready ticket(s) from Linear                 │
   │       │                                                         │
   │       ▼                                                         │
   │  5. Executor: Claude Code runs inside target repo,              │
-  │     reads ticket from disk, produces a branch + PR             │
+  │     receives the ticket, produces a branch + PR                 │
   │       │                                                         │
   │       ▼                                                         │
   │  6. Write-back: update Linear ticket state,                     │
@@ -48,7 +48,7 @@
 
 ## Components
 
-**Linear (queue).** Linear is the single source of truth for what work needs to be done. Each target repository has a corresponding Linear team. Issues carry structured custom fields (`scope_paths`, `acceptance_criteria`, `budget_tokens`, `budget_minutes`) that the factory reads. The factory polls for issues in the "Ready for Agent" workflow state.
+**Linear (queue).** Linear is the single source of truth for what work needs to be done. Each target repository has a corresponding Linear team. Issues carry structured description sections (`scope_paths`, `acceptance_criteria`, and optional planning notes) that the factory reads. The factory polls for issues with the Ready For AI trigger and normal runs execute only tickets returned by the current Linear pull.
 
 **GitHub (target repositories).** Target repos are where the code lives. The executor opens branches and pull requests here. Branch protection rules on the default branch require human approval before merge.
 
@@ -56,7 +56,7 @@
 
 **The local manifest (`manifest.yaml`).** A gitignored YAML file listing every registered target repo with host-specific configuration: local filesystem path, build/test commands, default branch, and the Linear team key. `manifest.example.yaml` is the checked-in template.
 
-**Claude Code (executor).** The executor is a Claude Code agent that runs inside the target repository's working directory. It reads a ticket from disk, follows the target repo's `CLAUDE.md` for coding conventions, implements the changes, runs tests, and opens a PR. The executor is invoked as a subprocess by the factory CLI; it has no direct knowledge of Linear.
+**Claude Code / Codex (executor).** The executor is an agent that runs inside the target repository's working directory. It receives a parsed ticket, follows the target repo's `CLAUDE.md` / `AGENTS.md` for coding conventions, implements the changes, runs tests, and opens a PR. The executor is invoked as a subprocess by the factory CLI; it has no direct knowledge of Linear.
 
 ## Boundaries
 
@@ -64,7 +64,7 @@
 |---|---|
 | What work needs doing | Linear (issue queue) |
 | Team → repo mapping | Linear native GitHub integration |
-| Ticket metadata (scope, criteria, budget) | Linear custom fields → ticket files on disk |
+| Ticket metadata (scope, criteria, notes) | Linear issue description sections |
 | Local filesystem paths | `manifest.yaml` (gitignored) |
 | Build and test commands | `manifest.yaml` |
 | Per-repo coding conventions | Target repo's `CLAUDE.md` |
@@ -81,4 +81,4 @@
 
 **Secrets never in code.** The factory reads API keys and tokens from environment variables or `manifest.yaml` (gitignored). Nothing sensitive is committed to `ai_factory` or to any target repo as a result of a factory run. Pre-run checks (Phase 4) verify that the target repo's `.gitignore` covers common secret files.
 
-**Scope checks.** If a ticket declares `scope_paths`, the executor's output diff is checked against those globs before the PR is opened. Out-of-scope changes cause the run to fail. Implemented in Phase 4.
+**Scope advisories.** If a ticket declares `scope_paths`, the executor's output diff is checked against those globs before the PR is opened. Out-of-scope changes are reported in the Linear comment and batch log, but they do not fail the run on their own.
