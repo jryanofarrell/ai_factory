@@ -107,3 +107,53 @@ def _extract_section(body: str, heading: str) -> str | None:
         section_lines.append(line)
 
     return "\n".join(section_lines).strip()
+
+
+def _parse_scope_paths(description: str) -> list[str]:
+    section = _extract_section(description, "Scope Paths")
+    if not section:
+        return []
+    paths: list[str] = []
+    for line in section.splitlines():
+        line = line.strip().replace("\\*", "*").lstrip("- ")
+        if line and not line.startswith("#"):
+            paths.append(line)
+    return paths
+
+
+def find_scope_skill_mismatches(description: str, repo_root: Path) -> list[str]:
+    """Return one warning line per per-file-type skill whose area is touched by
+    the ticket's scope paths but whose own path is not listed in those scope paths.
+
+    The check is intentionally simple: it walks `.ai/skills/<area>/<task>.md` files
+    that already exist in `repo_root`, treats the first directory under `.ai/skills/`
+    as the area, and flags a scope path whose first segment equals that area without
+    also listing the skill file itself. Skips `.ai/skills/ai-structure.md` (not a
+    per-file-type skill) and any skill files at the top level of `.ai/skills/`.
+    """
+    skills_root = repo_root / ".ai" / "skills"
+    if not skills_root.is_dir():
+        return []
+
+    scope_paths = _parse_scope_paths(description)
+    if not scope_paths:
+        return []
+
+    normalized_scope = [p.removeprefix("./").rstrip("/") for p in scope_paths]
+    scope_first_segments = {p.split("/", 1)[0] for p in normalized_scope if p}
+
+    warnings: list[str] = []
+    for skill_path in sorted(skills_root.rglob("*.md")):
+        rel = skill_path.relative_to(repo_root)
+        parts = rel.parts
+        # Expect .ai/skills/<area>/<task>.md — skip ai-structure.md and any
+        # top-level skill files (no area dimension to check against scope).
+        if len(parts) < 4:
+            continue
+        area = parts[2]
+        rel_str = str(rel)
+
+        if area in scope_first_segments and rel_str not in normalized_scope:
+            warnings.append(f"scope touches {area}/ but {rel_str} is not in Scope Paths")
+
+    return warnings

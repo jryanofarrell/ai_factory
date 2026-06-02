@@ -247,3 +247,27 @@ Future tickets that add a file of a canonical type that doesn't yet have a skill
 The starting set of canonical file types lives in the body of `.claude/commands/ai-files.md`. Backend types: `model`, `route`, `service`, `schema`, `testing`, `seed`, `migrations`. Frontend types: `page`, `component`, `hook`, `lib`, `form`, `types`. The list is extensible per repo when a repo uses shapes not on this list.
 
 **Consequences:** Newly bootstrapped repos get a richer, immediately-useful set of skill files. Each ticket touching a canonical file type now has a documented pattern to follow and a place to record evolution. The empty-stub concern is addressed structurally by the "at least one matching file" gate — no file type, no skill. Existing repos scaffolded under ADR-013 (currently only the Hello Patient take-home) need a one-time retroactive scaffold; see HEL-6 for that work in the take-home repo.
+
+## ADR-016: Skill names are discovery-driven from the codebase's own vocabulary
+
+**Status:** Accepted — supersedes the "starting set of canonical file types" paragraph in ADR-015
+
+**Context:** ADR-015 enumerated a starting set of canonical file types (backend: model, route, service, schema, testing, seed, migrations; frontend: page, component, hook, lib, form, types) in the body of `/ai-files`. The list is shaped by web-app conventions and only loosely fits other domains: a game repo has sprites and scenes, a data pipeline has DAGs and transforms, infra has modules and stacks. Worse, the list invited two kinds of drift even inside web apps. First, the executor on HEL-6 picked `endpoint.md` over `router.md` because it was reasoning from what the file *contains* (endpoints) rather than what the file *is* (a router file in `routers/`). Second, the executor picked `api-client.md` over `lib.md` for a single-purpose file in `frontend/lib/` — which was the right call, but wasn't authorized by the rigid list. The rule needed to teach the executor when to follow the directory and when to follow the role, without reinventing the list per repo.
+
+**Decision:** Skill files are named after **what the file IS** in the codebase's own structural vocabulary, applied in this order:
+
+1. **Directory name first.** A pluralized directory becomes the singular skill name (`routers/` → `router.md`, `services/` → `service.md`, `sprites/` → `sprite.md`, `dags/` → `dag.md`).
+2. **Single-purpose file inside a generic directory** takes the file's role, not the directory (`frontend/lib/chatApi.ts` alone in `lib/` → `api-client.md`, not `lib.md`).
+3. **Framework terminology when no directory signals it** (SQLAlchemy "models" → `model.md`, Phaser "scenes" → `scene.md`).
+4. **Reject renaming based on contents.** Routers contain endpoints; the file is still a router. Models contain fields; the file is still a model.
+
+`/ai-files` no longer enumerates a fixed canonical set. It describes the rule, then provides worked example sets for four common repo shapes (web app, game, data pipeline, infra) as illustrations of how the rule produces a real skill list. The actual skill set for any given repo comes from applying the rule against what is on disk.
+
+Two enforcement points support the rule:
+
+- **`/run` Step 4** — before writing any file whose type matches an existing skill, the executor reads `.ai/skills/<area>/<task>.md` and conforms. If the ticket adds the first file of a previously-unseen recurring type, the executor creates the skill inline, named per the rule.
+- **`factory create-issue`** — emits a soft warning (stderr, never blocks) when a ticket's `## Scope Paths` touch an `<area>/` directory that already has a per-file-type skill, but the skill's path is not listed in scope. Implemented in `factory.ticket.find_scope_skill_mismatches`. Detection-only: any false positives are ignored at human review.
+
+**Consequences:** Skill scaffolding works for non-web repos without per-domain code changes. The HEL-6 `endpoint.md` mistake is structurally ruled out — the rule now authorizes the executor's good naming instinct (`api-client.md`) and rejects its bad one (`endpoint.md`). The soft warning catches scope/skill mismatches at ticket-creation time rather than waiting for an executor or reviewer to notice. The rigid type list in ADR-015 is no longer load-bearing — `/ticket` and ADR-015 are updated to refer to "recurring file-type patterns" + the naming rule rather than enumerating types.
+
+

@@ -114,6 +114,12 @@ def create_issue(
         typer.echo(f"Error: no Backlog/Todo state found for team {team_key}", err=True)
         raise typer.Exit(1)
 
+    from .ticket import find_scope_skill_mismatches
+
+    warnings = find_scope_skill_mismatches(description, repo_config.local_path)
+    for w in warnings:
+        typer.echo(f"warning: {w}", err=True)
+
     issue = client.create_issue(
         team_id=team_id, title=title, description=description, state_id=state_id
     )

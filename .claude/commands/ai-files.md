@@ -31,26 +31,37 @@ Every target repo should have:
 
 ### Canonical file types
 
-For each `<area>` discovered in Step 3, scaffold a `.ai/skills/<area>/<task>.md` for every type below that has at least one matching file in the codebase. Skip the rest — never create a skill describing a pattern the repo doesn't have.
+For each `<area>` discovered in Step 3, scan the codebase for the recurring file-type patterns that area actually contains, and scaffold one `.ai/skills/<area>/<task>.md` per detected pattern. The list of patterns is **discovery-driven** — derive it from what the repo has, not from a fixed taxonomy.
 
-**Backend (`api/` or whatever the area key is — e.g. `backend`):**
-- `model.md` — ORM table definitions (SQLAlchemy `Mapped`/`mapped_column`, Drizzle table specs, ActiveRecord classes, etc.). Triggered by files in `models.py` / `models/`, `db/schema.ts`, `app/models/*.rb`.
-- `route.md` — HTTP route handlers (FastAPI `APIRouter`, Express handlers, Flask blueprints). Triggered by `routers/`, `routes/`, route decorators.
-- `service.md` — service layer / business logic modules. Triggered by `services/`.
-- `schema.md` — request/response validation schemas (Pydantic, Zod). Triggered by `schemas.py`, `schemas/`, Zod schema files.
-- `testing.md` — test layout and conventions. Triggered by `tests/`, `*_test.py`, `*.test.ts`.
-- `seed.md` — seed/fixture code that bootstraps DB state. Triggered by `seed.py`, `seeds/`.
-- `migrations.md` — DB migration workflow. Triggered by `alembic/`, `migrations/`, `db/migrations/`.
+#### Naming rule
 
-**Frontend (`web/` or whatever the area key is):**
-- `page.md` — top-level page components. Triggered by `app/**/page.tsx`, `pages/**/*.tsx`.
-- `component.md` — reusable React components. Triggered by `components/`.
-- `hook.md` — custom React hooks. Triggered by `hooks/` or `use*.{ts,tsx}` outside `components/`.
-- `lib.md` — API client / shared utilities. Triggered by `lib/`.
-- `form.md` — form handling pattern. Triggered by `*Form.tsx` or forms-specific modules.
-- `types.md` — shared TypeScript types. Triggered by `types/`.
+Skills are named after **what the file IS** in the codebase's own structural vocabulary, not what the file contains.
 
-For shapes the codebase uses that aren't in this list, invent a sensible `<task>` name and skill — the list is the starting set, not the limit. Conversely, if you'd be writing TODOs, skip the file.
+1. **Take the directory name first.** A pluralized directory becomes the singular skill name. `routers/` → `router.md`, `services/` → `service.md`, `models/` → `model.md`, `components/` → `component.md`, `sprites/` → `sprite.md`, `dags/` → `dag.md`.
+2. **For a single-purpose file inside a generic directory**, name the skill after the file's role, not the directory. `frontend/lib/chatApi.ts` as the only file in `lib/` → `api-client.md`, not `lib.md` (which would be too generic).
+3. **Match the framework's own terminology when no directory signals it.** Drizzle calls them "tables" — use `table.md`. SQLAlchemy calls them "models" — use `model.md`. Phaser scenes — `scene.md`. The codebase's own word wins.
+4. **Reject the urge to rename based on contents.** Routers contain endpoints; the file is still a router (`router.md`, not `endpoint.md`). Models contain fields; the file is still a model. The skill describes the unit the developer thinks in.
+
+Apply in that order. The first rule that fires wins.
+
+#### Examples by repo shape
+
+Each example shows the pattern set a `/ai-files` run would scaffold for that kind of repo. They are illustrative — the actual set comes from what's on disk, named per the rule above.
+
+**Web app (FastAPI + Next.js, e.g. the take-home / `thms-platform`):**
+- Backend area: `model.md` (`models.py` / `models/`), `router.md` (`routers/`), `service.md` (`services/`), `schema.md` (Pydantic), `testing.md` (`tests/`), `seed.md` (`seed.py`), `migrations.md` (`alembic/`).
+- Frontend area: `page.md` (`app/**/page.tsx`), `component.md` (`components/`), `hook.md` (`hooks/`, `use*.tsx`), `api-client.md` (single-purpose file inside `lib/` — not `lib.md`), `form.md` (`*Form.tsx`), `types.md` (`types/`).
+
+**Game (Unity / Phaser / Godot):**
+- `scene.md` (`scenes/` or `Scenes/`), `sprite.md` (`assets/sprites/`), `prefab.md` (`prefabs/`), `behavior.md` or `component.md` (`scripts/behaviors/`, `components/`), `system.md` (ECS systems), `testing.md`.
+
+**Data pipeline (Airflow / dbt / Dagster):**
+- `dag.md` (`dags/`), `source.md` (`sources/` or extractor modules), `transform.md` (`transforms/`), `model.md` (dbt `models/`), `test.md` (dbt tests, `tests/`), `seed.md` (dbt `seeds/`).
+
+**Infra (Terraform / Pulumi):**
+- `module.md` (`modules/`), `stack.md` (`stacks/` or `environments/`), `policy.md` (OPA/Rego, `policies/`), `variable.md` (root variables files), `testing.md` (`tests/`, `terratest/`).
+
+These four are not exhaustive. A CLI tool, a library, a mobile app each have their own vocabulary — scaffold per the rule and the codebase's words. Skip any type that has zero matching files: empty stubs are worse than no skill.
 
 Not created at scaffold time:
 - `.claude/commands/` — added per repo only when a slash command is justified
@@ -97,7 +108,7 @@ Example output for the take-home starter:
 ```
 backend/
   ✓ model       (backend/models.py — User)
-  ✓ route       (backend/main.py — GET /users/me)
+  ✓ router      (backend/routers/users.py — GET /users/me)
   ✗ service     (no services/ directory)
   ✗ schema      (no Pydantic models)
   ✗ testing     (no tests/ directory)
@@ -108,12 +119,12 @@ frontend/
   ✓ page        (app/page.tsx — server component)
   ✗ component   (no components/ directory)
   ✗ hook        (no hooks/)
-  ✗ lib         (no lib/)
+  ✗ api-client  (no lib/<single-purpose>.ts)
   ✗ form        (no form modules)
   ✗ types       (no types/)
 ```
 
-Only present file types get skills. Absent ones get skipped — they earn a skill the first time a ticket adds a matching file (see the `/ticket` rule on per-file-type skill updates).
+Names follow the rule above — `routers/` → `router`, single-purpose file in `lib/` → `api-client` (not `lib`). Only present file types get skills. Absent ones get skipped — they earn a skill the first time a ticket adds a matching file (see the `/ticket` rule on per-file-type skill updates).
 
 ### Step 5 — Draft content for missing files
 
