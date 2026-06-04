@@ -43,8 +43,9 @@ from .manifest import RepoConfig, load_manifest
 from .providers import AgentResult
 from .providers import claude as claude_provider
 from .providers import codex as codex_provider
+from .providers import opencode as opencode_provider
 from .quota_tracker import QuotaTracker
-from .ticket import Ticket, parse_ticket
+from .ticket import Subtask, Ticket, parse_ticket
 
 
 @dataclass
@@ -105,15 +106,25 @@ def run_ticket(
     )
 
     try:
-        agent = _run_with_fallback(
-            repo.local_path,
-            _build_prompt(ticket, repo.local_path),
-            capture_cost=capture_cost,
-            budget_minutes=None,
-            providers=_providers,
-            quota_tracker=quota_tracker,
-            max_utilization=max_utilization,
-        )
+        if ticket.subtasks:
+            agent = _run_subtask_loop(
+                ticket=ticket,
+                repo_path=repo.local_path,
+                capture_cost=capture_cost,
+                providers=_providers,
+                quota_tracker=quota_tracker,
+                max_utilization=max_utilization,
+            )
+        else:
+            agent = _run_with_fallback(
+                repo.local_path,
+                _build_prompt(ticket, repo.local_path),
+                capture_cost=capture_cost,
+                budget_minutes=None,
+                providers=_providers,
+                quota_tracker=quota_tracker,
+                max_utilization=max_utilization,
+            )
         result.exit_code = agent.exit_code
         result.tokens_used = agent.tokens_used
         result.cost_usd = agent.cost_usd
@@ -352,6 +363,8 @@ def _run_with_fallback(
             )
         elif name == "codex":
             agent = codex_provider.run(local_path, prompt, budget_minutes=budget_minutes)
+        elif name == "opencode":
+            agent = opencode_provider.run(local_path, prompt, budget_minutes=budget_minutes)
         else:
             typer.echo(f"  [{name}] unknown provider, skipping.", err=True)
             continue
@@ -381,6 +394,220 @@ def _run_with_fallback(
     msg = "All executor providers are quota-exhausted. " + ", ".join(status_parts)
     typer.echo(f"\n{msg}", err=True)
     return AgentResult(exit_code=-1, usage_limit_hit=True, provider="exhausted")
+
+
+def _run_subtask_loop(
+    ticket: Ticket,
+    repo_path: Path,
+    capture_cost: bool,
+    providers: list[str],
+    quota_tracker: QuotaTracker | None,
+    max_utilization: float,
+) -> AgentResult:
+    """Execute each subtask sequentially as its own agent invocation.
+
+    Returns an aggregated AgentResult:
+      - exit_code 0 if all subtasks ran cleanly; first non-zero otherwise (and loop stops)
+      - tokens_used / cost_usd summed across subtasks
+      - timed_out / usage_limit_hit propagated from any failing subtask
+      - provider = the provider that ran the last (or failing) subtask
+
+    Failure policy: if a subtask hits a quota-exhausted state or returns non-zero,
+    stop the loop and propagate. The caller (run_ticket) handles branch preservation.
+
+    Per-subtask tier_hint reorders the providers list so the hinted provider is tried
+    first; fallbacks remain available if it fails or is exhausted.
+    """
+    total_tokens = 0
+    total_cost = 0.0
+    last_provider = "unknown"
+    last_output: str | None = None
+    completed: list[Subtask] = []
+
+    for subtask in ticket.subtasks:
+        typer.echo(f"\n  ── subtask [{subtask.id}] {subtask.title}")
+        ordered = _providers_with_tier_hint(providers, subtask.tier_hint)
+        prompt = _build_subtask_prompt(ticket, subtask, completed, repo_path)
+        agent = _run_with_fallback(
+            repo_path,
+            prompt,
+            capture_cost=capture_cost,
+            budget_minutes=None,
+            providers=ordered,
+            quota_tracker=quota_tracker,
+            max_utilization=max_utilization,
+        )
+
+        if agent.tokens_used:
+            total_tokens += agent.tokens_used
+        if agent.cost_usd:
+            total_cost += agent.cost_usd
+        last_provider = agent.provider
+        last_output = agent.output or last_output
+
+        if agent.usage_limit_hit or agent.timed_out or agent.exit_code != 0:
+            return AgentResult(
+                exit_code=agent.exit_code if agent.exit_code != 0 else -1,
+                cost_usd=total_cost or None,
+                tokens_used=total_tokens or None,
+                output=last_output,
+                timed_out=agent.timed_out,
+                usage_limit_hit=agent.usage_limit_hit,
+                provider=last_provider,
+            )
+
+        completed.append(subtask)
+
+    return AgentResult(
+        exit_code=0,
+        cost_usd=total_cost or None,
+        tokens_used=total_tokens or None,
+        output=last_output,
+        provider=last_provider,
+    )
+
+
+def _providers_with_tier_hint(providers: list[str], hint: str | None) -> list[str]:
+    """Reorder providers so the hinted tier is first; keep others as fallbacks.
+
+    hint='local' maps to 'opencode'. hint='hosted' is a no-op (default order is
+    already claude→codex). Unknown hints are no-ops.
+    """
+    if not hint:
+        return providers
+    if hint == "local":
+        target = "opencode"
+    elif hint == "hosted":
+        return providers
+    else:
+        return providers
+
+    if target not in providers:
+        return providers
+    return [target] + [p for p in providers if p != target]
+
+
+def _build_subtask_prompt(
+    ticket: Ticket,
+    subtask: Subtask,
+    completed: list[Subtask],
+    repo_path: Path,
+) -> str:
+    """Build a focused prompt for one subtask within a ticket.
+
+    Includes: project rules, overall ticket title + AC (for context), this subtask's
+    spec, the referenced skill content (loaded from disk), the list of already-completed
+    subtasks, and the current git diff so the agent sees prior work.
+    """
+    rules = _load_repo_rules(repo_path)
+    skill_text = _load_skill(repo_path, subtask.skill) if subtask.skill else ""
+    diff_so_far = _current_diff(repo_path)
+    remaining = [s for s in ticket.subtasks if s not in completed and s is not subtask]
+
+    parts: list[str] = []
+    if rules:
+        parts += ["## Project Rules", "", rules, "", "---", ""]
+
+    parts += [
+        f"You are executing ONE subtask within ticket {ticket.id}.",
+        "Other subtasks will run before and after yours — together they make the full PR.",
+        "Do not satisfy the overall acceptance criteria yourself; only complete YOUR subtask.",
+        "",
+        f"## Ticket: {ticket.title}",
+        "",
+        "Overall acceptance criteria (context only):",
+        "",
+        ticket.acceptance_criteria,
+        "",
+        f"## Your subtask: [{subtask.id}] {subtask.title}",
+        "",
+        "**Files you may touch:**",
+    ]
+    for f in subtask.files or ["(no files listed — be conservative)"]:
+        parts.append(f"  - {f}")
+    parts += [
+        "",
+        "**Changes:**",
+        "",
+        subtask.changes or "(see overall ticket; subtask body left empty)",
+    ]
+
+    if skill_text:
+        parts += [
+            "",
+            f"## Skill to follow: {subtask.skill}",
+            "",
+            skill_text,
+        ]
+    elif subtask.skill:
+        parts += [
+            "",
+            f"## Skill reference: {subtask.skill}",
+            "",
+            f"(Skill file not found at {subtask.skill}. "
+            "Proceed using only the subtask spec above.)",
+        ]
+
+    if completed:
+        parts += ["", "## Already completed in this run"]
+        for s in completed:
+            parts.append(f"  - [{s.id}] {s.title}")
+
+    if remaining:
+        parts += ["", "## Remaining subtasks (do NOT do these — they belong to later runs)"]
+        for s in remaining:
+            parts.append(f"  - [{s.id}] {s.title}")
+
+    if diff_so_far.strip():
+        parts += [
+            "",
+            "## Current state of the working tree (changes from earlier subtasks)",
+            "",
+            "```diff",
+            diff_so_far,
+            "```",
+        ]
+
+    parts += [
+        "",
+        "## Rules for this subtask",
+        "",
+        "1. Read the listed files (if they exist) and the skill above.",
+        "2. Make ONLY the changes for this subtask. Do not touch other files.",
+        "3. Do NOT run tests. Do NOT run `git commit` or `git push`.",
+        "4. The codebase may be in a partially-broken state — that's expected. "
+        "Tests run once after all subtasks complete.",
+        "5. When done, stop.",
+    ]
+
+    return "\n".join(parts)
+
+
+def _load_skill(repo_path: Path, skill_rel: str) -> str:
+    """Read a skill markdown file. Returns empty string if missing."""
+    p = repo_path / skill_rel
+    try:
+        return p.read_text().strip()
+    except (OSError, FileNotFoundError):
+        return ""
+
+
+def _current_diff(repo_path: Path) -> str:
+    """Return `git diff HEAD` (all tracked + staged) for the working tree."""
+    if not repo_path.exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout
 
 
 def _scope_violations(local_path: Path, ticket: Ticket) -> list[str]:
