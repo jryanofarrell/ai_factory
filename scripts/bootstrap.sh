@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Bootstrap ai_factory on a fresh Linux host (target: always-on gaming PC).
+# Bootstrap ai_factory on a fresh macOS or Linux host.
 #
 # Idempotent: skips anything already installed. Safe to re-run.
-# After this finishes successfully, edit manifest.yaml and .env, then
+# After this finishes, edit manifest.yaml and .env, then
 # `uv run factory run` should work end-to-end.
 #
 # Usage: bash scripts/bootstrap.sh
 #
-# Requires: a Debian/Ubuntu host with sudo. macOS is NOT supported (signal
-# handling and shell expectations in the codebase target POSIX/Linux).
+# Supported:
+#   - macOS (Apple Silicon or Intel) — installs via Homebrew
+#   - Debian/Ubuntu Linux             — installs via apt
+#
+# Windows is not supported (signal handling in the factory targets POSIX).
 
 set -euo pipefail
 
@@ -24,58 +27,72 @@ error() { printf "\033[1;31m[bootstrap]\033[0m %s\n" "$*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1; }
 
-# ---------- OS guard ----------
+# ---------- OS detection ----------
 case "$(uname -s)" in
-  Linux) ;;
-  *) error "This script targets Linux. macOS/Windows are not supported." ;;
+  Darwin) OS="darwin" ;;
+  Linux)  OS="linux"  ;;
+  *) error "Unsupported OS: $(uname -s). This script targets macOS or Linux." ;;
 esac
+info "Detected OS: $OS"
 
-if ! need apt-get; then
-  error "apt-get not found. This script assumes Debian/Ubuntu."
-fi
-
-# ---------- apt packages ----------
-APT_MISSING=()
-for pkg in git curl ca-certificates build-essential; do
-  dpkg -s "$pkg" >/dev/null 2>&1 || APT_MISSING+=("$pkg")
-done
-if [ ${#APT_MISSING[@]} -gt 0 ]; then
-  info "Installing apt packages: ${APT_MISSING[*]}"
-  sudo apt-get update -y
-  sudo apt-get install -y "${APT_MISSING[@]}"
-else
-  info "Apt prerequisites already present."
+# ---------- package manager prerequisites ----------
+if [ "$OS" = "darwin" ]; then
+  if ! need brew; then
+    error "Homebrew not found. Install from https://brew.sh first."
+  fi
+elif [ "$OS" = "linux" ]; then
+  if ! need apt-get; then
+    error "apt-get not found. This script's Linux path assumes Debian/Ubuntu."
+  fi
+  APT_MISSING=()
+  for pkg in git curl ca-certificates build-essential; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || APT_MISSING+=("$pkg")
+  done
+  if [ ${#APT_MISSING[@]} -gt 0 ]; then
+    info "Installing apt prerequisites: ${APT_MISSING[*]}"
+    sudo apt-get update -y
+    sudo apt-get install -y "${APT_MISSING[@]}"
+  fi
 fi
 
 # ---------- gh (GitHub CLI) ----------
 if ! need gh; then
-  info "Installing GitHub CLI (gh)..."
-  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-  sudo chmod a+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-  sudo apt-get update -y
-  sudo apt-get install -y gh
+  if [ "$OS" = "darwin" ]; then
+    info "Installing gh via Homebrew..."
+    brew install gh
+  else
+    info "Installing gh via apt repo..."
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+    sudo chmod a+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+    sudo apt-get update -y
+    sudo apt-get install -y gh
+  fi
 else
   info "gh already installed."
 fi
 
 # ---------- gitleaks ----------
 if ! need gitleaks; then
-  info "Installing gitleaks..."
-  GITLEAKS_VERSION="8.21.2"
-  ARCH="$(uname -m)"
-  case "$ARCH" in
-    x86_64) GL_ARCH="x64" ;;
-    aarch64|arm64) GL_ARCH="arm64" ;;
-    *) error "Unsupported arch for gitleaks: $ARCH" ;;
-  esac
-  TMP="$(mktemp -d)"
-  curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GL_ARCH}.tar.gz" \
-    | tar -xz -C "$TMP"
-  sudo mv "$TMP/gitleaks" /usr/local/bin/gitleaks
-  rm -rf "$TMP"
+  if [ "$OS" = "darwin" ]; then
+    info "Installing gitleaks via Homebrew..."
+    brew install gitleaks
+  else
+    info "Installing gitleaks from GitHub release..."
+    GITLEAKS_VERSION="8.21.2"
+    case "$(uname -m)" in
+      x86_64)         GL_ARCH="x64"   ;;
+      aarch64|arm64)  GL_ARCH="arm64" ;;
+      *) error "Unsupported arch for gitleaks: $(uname -m)" ;;
+    esac
+    TMP="$(mktemp -d)"
+    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GL_ARCH}.tar.gz" \
+      | tar -xz -C "$TMP"
+    sudo mv "$TMP/gitleaks" /usr/local/bin/gitleaks
+    rm -rf "$TMP"
+  fi
 else
   info "gitleaks already installed."
 fi
@@ -84,7 +101,7 @@ fi
 if ! need uv; then
   info "Installing uv..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  # uv installer writes to ~/.local/bin; ensure it's on PATH for this script
+  # uv installer adds ~/.local/bin to PATH via shell rc; surface it here too
   export PATH="$HOME/.local/bin:$PATH"
 else
   info "uv already installed."
@@ -92,9 +109,14 @@ fi
 
 # ---------- Node (for codex CLI) ----------
 if ! need node; then
-  info "Installing Node.js (LTS) via NodeSource..."
-  curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-  sudo apt-get install -y nodejs
+  if [ "$OS" = "darwin" ]; then
+    info "Installing Node.js via Homebrew..."
+    brew install node
+  else
+    info "Installing Node.js (LTS) via NodeSource..."
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+  fi
 else
   info "node already installed ($(node --version))."
 fi
@@ -117,15 +139,28 @@ fi
 
 # ---------- ollama ----------
 if ! need ollama; then
-  info "Installing ollama..."
-  curl -fsSL https://ollama.com/install.sh | sh
+  if [ "$OS" = "darwin" ]; then
+    info "Installing ollama via Homebrew..."
+    brew install ollama
+  else
+    info "Installing ollama via curl installer..."
+    curl -fsSL https://ollama.com/install.sh | sh
+  fi
 else
   info "ollama already installed ($(ollama --version 2>&1 | head -1))."
 fi
 
 # Start ollama if it isn't already serving
 if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-  if systemctl list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
+  if [ "$OS" = "darwin" ]; then
+    info "Starting ollama via Homebrew services..."
+    brew services start ollama || true
+    # brew services takes a moment to actually bring the daemon up
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      curl -sf http://localhost:11434/api/tags >/dev/null 2>&1 && break
+      sleep 1
+    done
+  elif systemctl list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
     info "Starting ollama systemd service..."
     sudo systemctl enable --now ollama
   else
@@ -208,7 +243,7 @@ if [ ! -f "$REPO_ROOT/.env" ]; then
   cat > "$REPO_ROOT/.env" <<'EOF'
 LINEAR_API_KEY=
 # Optional: override the default local model used by the opencode provider.
-# OPENCODE_MODEL=ollama/qwen2.5-coder:14b
+# OPENCODE_MODEL=ollama/qwen3:8b-16k
 EOF
 fi
 
