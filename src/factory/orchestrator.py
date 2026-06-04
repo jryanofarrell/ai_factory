@@ -247,7 +247,11 @@ def run(
             if rr.success and not dry_run:
                 successful_repos.add(ticket.target_repo)
                 if rr.branch:
-                    session_branches.setdefault(ticket.target_repo, []).append(rr.branch)
+                    # Chains share one branch across N tickets — dedupe so the
+                    # memory-index extractor doesn't ls-tree the same branch N times.
+                    branches = session_branches.setdefault(ticket.target_repo, [])
+                    if rr.branch not in branches:
+                        branches.append(rr.branch)
                 staged = staging_files.get(ticket.id)
                 if staged is not None:
                     processed_dir.mkdir(parents=True, exist_ok=True)
