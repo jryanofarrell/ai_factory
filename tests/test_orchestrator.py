@@ -85,17 +85,28 @@ def test_run_uses_fresh_linear_tickets_not_stale_local_queue(tmp_path: Path) -> 
         acceptance_criteria="- fresh",
     )
 
+    from factory.runner import ChainResult
+
     with (
         patch(
             "factory.orchestrator.pull_tickets",
             return_value=PullResult(tickets=[fresh_ticket], written=["HEL-2"]),
         ) as pull,
         patch(
-            "factory.orchestrator.run_ticket",
-            return_value=RunResult(ticket_id="HEL-2", success=True, dry_run=True),
-        ) as run_ticket,
+            "factory.orchestrator.run_chain",
+            return_value=ChainResult(
+                chain_id="HEL-2",
+                branch=None,
+                pr_url=None,
+                per_ticket=[RunResult(ticket_id="HEL-2", success=True, dry_run=True)],
+                success=True,
+            ),
+        ) as run_chain_mock,
     ):
         run(manifest_path=manifest_path, no_cleanup=True, dry_run=True, api_key="test")
 
     pull.assert_called_once()
-    assert run_ticket.call_args.args[0].id == "HEL-2"
+    # run_chain receives a single-ticket chain.
+    chain_arg = run_chain_mock.call_args.args[0]
+    assert len(chain_arg) == 1
+    assert chain_arg[0].id == "HEL-2"

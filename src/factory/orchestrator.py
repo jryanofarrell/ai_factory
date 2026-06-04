@@ -7,11 +7,12 @@ from pathlib import Path
 
 import typer
 
+from .chains import ChainCycleError, group_into_chains
 from .git_ops import cleanup_stale_branches, create_memory_pr
 from .linear import LinearClient, LinearError
 from .manifest import load_manifest
 from .quota_tracker import QuotaTracker
-from .runner import RunResult, run_ticket
+from .runner import ChainResult, RunResult, run_chain
 from .sync import pull_tickets
 from .ticket import Ticket, parse_ticket
 
@@ -116,45 +117,93 @@ def run(
     # Track factory branches per repo so create_memory_pr can pull their memory files
     session_branches: dict[str, list[str]] = {}
 
-    # Step 5: process each ticket
+    # Step 5a: parse all tickets up front, filter unparseable / bad-target ones
+    parsed: list[tuple[Ticket, Path | None]] = []
     for ticket_or_none, ticket_file in work_items:
-        if interrupted:
-            break
-
-        staging_file: Path | None = None
         if ticket_or_none is None:
             assert ticket_file is not None
             try:
-                ticket = parse_ticket(ticket_file)
+                t = parse_ticket(ticket_file)
             except ValueError as e:
                 typer.echo(f"SKIP {ticket_file.name}: {e}", err=True)
                 continue
         else:
-            ticket = ticket_or_none
-
-        if ticket.target_repo not in manifest.repos:
+            t = ticket_or_none
+        if t.target_repo not in manifest.repos:
             typer.echo(
-                f"SKIP {ticket.id}: target_repo '{ticket.target_repo}' not in manifest", err=True
+                f"SKIP {t.id}: target_repo '{t.target_repo}' not in manifest", err=True
             )
             continue
+        parsed.append((t, ticket_file))
 
-        repo = manifest.repos[ticket.target_repo]
-        team_key = repo.linear_team or ticket.target_repo.upper()
+    if not parsed:
+        _print_summary(results, batch_file, dry_run)
+        return
 
-        if ticket_file is not None:
-            # Stage local tickets before running so interruptions don't re-queue them.
-            # On success → processed/. On failure → back to queue root for retry.
-            processing_dir.mkdir(parents=True, exist_ok=True)
-            staging_file = processing_dir / ticket_file.name
-            ticket_file.rename(staging_file)
+    # Step 5b: group into dependency chains (ADR-019)
+    # v1: trust the user. Any dep referenced in a parsed ticket that is NOT
+    # itself in the queue is treated as already-merged. The chain grouper
+    # still surfaces real conflicts: cycles, cross-repo deps.
+    parsed_ids = {t.id for t, _ in parsed}
+    referenced = {dep for t, _ in parsed for dep in t.depends_on}
+    merged_assumed = referenced - parsed_ids
+
+    try:
+        grouped = group_into_chains(
+            [t for t, _ in parsed],
+            merged_ticket_ids=merged_assumed,
+        )
+    except ChainCycleError as e:
+        typer.echo(f"\nERROR: dependency cycle in queue — {e}", err=True)
+        typer.echo("Aborting. Fix the cycle in Linear and re-run.", err=True)
+        return
+
+    file_by_id = {t.id: f for t, f in parsed}
+
+    for refused_ticket, bad_deps in grouped.skipped_cross_repo:
+        typer.echo(
+            f"REFUSE {refused_ticket.id}: cross-repo dependency on "
+            f"{', '.join(bad_deps)} (different target_repo). Skipping.",
+            err=True,
+        )
+    for skipped_ticket, missing in grouped.skipped_unsatisfied:
+        typer.echo(
+            f"SKIP {skipped_ticket.id}: depends on missing ticket(s) "
+            f"{', '.join(missing)} not in queue and not merged.",
+            err=True,
+        )
+
+    # Step 5c: process each chain
+    for chain in grouped.chains:
+        if interrupted:
+            break
+
+        repo = manifest.repos[chain[0].target_repo]
+        team_key = repo.linear_team or chain[0].target_repo.upper()
+
+        # Stage local files for every ticket in this chain.
+        staging_files: dict[str, Path] = {}
+        for t in chain:
+            f = file_by_id.get(t.id)
+            if f is not None:
+                processing_dir.mkdir(parents=True, exist_ok=True)
+                staged = processing_dir / f.name
+                f.rename(staged)
+                staging_files[t.id] = staged
 
         typer.echo(f"\n{'─' * 60}")
-        typer.echo(f"{'[DRY-RUN] ' if dry_run else ''}Running {ticket.id}: {ticket.title}")
+        if len(chain) == 1:
+            typer.echo(
+                f"{'[DRY-RUN] ' if dry_run else ''}Running {chain[0].id}: {chain[0].title}"
+            )
+        else:
+            chain_label = " → ".join(t.id for t in chain)
+            typer.echo(f"{'[DRY-RUN] ' if dry_run else ''}Running chain {chain_label}")
         typer.echo(f"{'─' * 60}")
 
         try:
-            result = run_ticket(
-                ticket,
+            chain_result: ChainResult = run_chain(
+                chain,
                 repo,
                 capture_cost=True,
                 dry_run=dry_run,
@@ -164,56 +213,83 @@ def run(
                 max_utilization=manifest.max_utilization,
             )
         except KeyboardInterrupt:
-            batch["tickets"][ticket.id] = {"status": "interrupted"}
+            for t in chain:
+                batch["tickets"][t.id] = {"status": "interrupted"}
             _save_batch(batch_file, batch)
             raise
 
-        results.append(result)
+        # For each ticket in the chain that was actually attempted, record
+        # results, write back to Linear, and stage the file appropriately.
+        attempted_ids = {rr.ticket_id for rr in chain_result.per_ticket}
+        for rr in chain_result.per_ticket:
+            results.append(rr)
+            ticket = next(t for t in chain if t.id == rr.ticket_id)
+            _record_batch_entry(batch, ticket, rr, dry_run)
+            _save_batch(batch_file, batch)
+            if client and ticket.linear_id:
+                _write_back(client, ticket, team_key, rr)
+            if rr.success and not dry_run:
+                successful_repos.add(ticket.target_repo)
+                if rr.branch:
+                    session_branches.setdefault(ticket.target_repo, []).append(rr.branch)
+                staged = staging_files.get(ticket.id)
+                if staged is not None:
+                    processed_dir.mkdir(parents=True, exist_ok=True)
+                    staged.rename(processed_dir / staged.name)
+            else:
+                staged = staging_files.get(ticket.id)
+                if staged is not None:
+                    staged.rename(queue_dir / staged.name)
 
-        if result.usage_limit_hit and manifest.stop_on_usage_limit:
+        # Tickets that the chain never attempted (downstream of a mid-chain
+        # failure): un-stage them back to the queue, mark them queued.
+        for t in chain:
+            if t.id in attempted_ids:
+                continue
+            batch["tickets"][t.id] = {"status": "skipped_after_chain_failure"}
+            _save_batch(batch_file, batch)
+            staged = staging_files.get(t.id)
+            if staged is not None:
+                staged.rename(queue_dir / staged.name)
+
+        # If any chained ticket hit the usage limit and the manifest says
+        # stop, end the session.
+        if (
+            any(rr.usage_limit_hit for rr in chain_result.per_ticket)
+            and manifest.stop_on_usage_limit
+        ):
             typer.echo(
-                "\nClaude usage limit detected. Stopping after this ticket to avoid "
-                "overage charges.\n"
+                "\nUsage limit detected. Stopping after this chain to avoid overage charges.\n"
                 "Set `stop_on_usage_limit: false` in manifest.yaml to disable this behaviour.",
                 err=True,
             )
             _save_batch(batch_file, batch)
+            _push_memory_prs(manifest, successful_repos, session_branches, dry_run)
             _print_summary(results, batch_file, dry_run)
             return
 
-        record: dict = {
-            "status": "dry_run" if dry_run else ("succeeded" if result.success else "failed")
-        }
-        record["duration_s"] = round(result.duration_s, 1)
-        if result.pr_url:
-            record["pr_url"] = result.pr_url
-        if result.cost_usd is not None:
-            record["cost_usd"] = round(result.cost_usd, 4)
-        if result.branch:
-            record["branch"] = result.branch
-        if result.error:
-            record["reason"] = result.error
-        if result.scope_violations:
-            record["scope_advisory"] = result.scope_violations
-        batch["tickets"][ticket.id] = record
-        _save_batch(batch_file, batch)
-
-        if client and ticket.linear_id:
-            _write_back(client, ticket, team_key, result)
-
-        if result.success and not dry_run:
-            successful_repos.add(ticket.target_repo)
-            if result.branch:
-                session_branches.setdefault(ticket.target_repo, []).append(result.branch)
-            if staging_file is not None:
-                processed_dir.mkdir(parents=True, exist_ok=True)
-                staging_file.rename(processed_dir / staging_file.name)
-        elif staging_file is not None:
-            # Return to queue root so the ticket is eligible for retry next run.
-            staging_file.rename(queue_dir / staging_file.name)
-
     _push_memory_prs(manifest, successful_repos, session_branches, dry_run)
     _print_summary(results, batch_file, dry_run)
+
+
+def _record_batch_entry(
+    batch: dict, ticket: Ticket, result: RunResult, dry_run: bool
+) -> None:
+    record: dict = {
+        "status": "dry_run" if dry_run else ("succeeded" if result.success else "failed")
+    }
+    record["duration_s"] = round(result.duration_s, 1)
+    if result.pr_url:
+        record["pr_url"] = result.pr_url
+    if result.cost_usd is not None:
+        record["cost_usd"] = round(result.cost_usd, 4)
+    if result.branch:
+        record["branch"] = result.branch
+    if result.error:
+        record["reason"] = result.error
+    if result.scope_violations:
+        record["scope_advisory"] = result.scope_violations
+    batch["tickets"][ticket.id] = record
 
 
 def _push_memory_prs(
