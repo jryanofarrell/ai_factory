@@ -153,6 +153,116 @@ def test_scope_skill_mismatch_no_skills_dir(tmp_path: Path) -> None:
     assert find_scope_skill_mismatches(desc, tmp_path) == []
 
 
+SUBTASK_TICKET = """\
+---
+id: THM-99
+title: Sample with subtasks
+target_repo: thms-platform
+---
+
+## Acceptance Criteria
+
+- Feature works end to end.
+
+## Subtasks
+
+### 1. Add my_vendors Drizzle schema
+- Files: apps/api/src/myVendor/schema.ts
+- Skill: .ai/skills/api/schema.md
+- Tier: local
+- Depends on: (none)
+
+Add the Drizzle table for my_vendors with fields vendor_id (nullable FK),
+email, name, notes.
+
+### 2. Add myVendor Manager
+- Files: apps/api/src/myVendor/Manager.ts
+- Skill: .ai/skills/api/manager.md
+- Tier: local
+- Depends on: 1
+
+Standard CRUD manager: findById, findByUser, create, update, delete.
+
+### 3. Add myVendor routes
+- Files: apps/api/src/myVendor/route.ts, apps/api/src/myVendor/__tests__/route.test.ts
+- Skill: .ai/skills/api/route.md
+- Tier: hosted
+- Depends on: 1, 2
+
+Wire HTTP handlers and the wire+auth test.
+"""
+
+
+def test_subtasks_parsed(tmp_path: Path) -> None:
+    t = parse_ticket(write(tmp_path, SUBTASK_TICKET))
+    assert len(t.subtasks) == 3
+
+    s1, s2, s3 = t.subtasks
+    assert s1.id == "1"
+    assert s1.title == "Add my_vendors Drizzle schema"
+    assert s1.files == ["apps/api/src/myVendor/schema.ts"]
+    assert s1.skill == ".ai/skills/api/schema.md"
+    assert s1.tier_hint == "local"
+    assert s1.depends_on == []
+    assert "my_vendors" in s1.changes
+
+    assert s2.depends_on == ["1"]
+    assert s2.tier_hint == "local"
+    assert "CRUD" in s2.changes
+
+    assert s3.tier_hint == "hosted"
+    assert s3.depends_on == ["1", "2"]
+    assert s3.files == [
+        "apps/api/src/myVendor/route.ts",
+        "apps/api/src/myVendor/__tests__/route.test.ts",
+    ]
+
+
+def test_subtasks_empty_when_section_absent(tmp_path: Path) -> None:
+    t = parse_ticket(write(tmp_path, VALID_TICKET))
+    assert t.subtasks == []
+
+
+def test_subtask_section_with_only_whitespace(tmp_path: Path) -> None:
+    body = VALID_TICKET.replace(
+        "## Acceptance Criteria",
+        "## Subtasks\n\n   \n\n## Acceptance Criteria",
+    )
+    t = parse_ticket(write(tmp_path, body))
+    assert t.subtasks == []
+
+
+def test_subtask_minimal_fields(tmp_path: Path) -> None:
+    body = """\
+---
+id: THM-1
+title: Minimal
+target_repo: r
+---
+
+## Acceptance Criteria
+
+- x
+
+## Subtasks
+
+### A. Trivial
+- Files: x.md
+
+just edit x.md.
+"""
+    t = parse_ticket(write(tmp_path, body))
+    assert len(t.subtasks) == 1
+    s = t.subtasks[0]
+    assert s.id == "A"
+    assert s.title == "Trivial"
+    assert s.files == ["x.md"]
+    assert s.skill is None
+    assert s.tier_hint is None
+    assert s.depends_on == []
+    assert "edit x.md" in s.changes
+
+
 def test_scope_skill_mismatch_multiple_areas(tmp_path: Path) -> None:
     _scaffold_skills(
         tmp_path,

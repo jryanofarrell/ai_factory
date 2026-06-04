@@ -2,11 +2,20 @@ version: 1
 queue_dir: .factory/queue
 
 # Executor providers tried in order. If the first hits its quota, the next is used.
-# Supported: claude, codex
-# To install codex: npm install -g @openai/codex
+# Supported: claude, codex, opencode
+# To install codex:    npm install -g @openai/codex
+# To install opencode: curl -fsSL https://opencode.ai/install | bash
+#
+# opencode runs a local model via ollama and never hits a quota — use it as the
+# final fallback after the metered providers. Requires ollama serving locally
+# (http://localhost:11434) and a model registered in ~/.config/opencode/opencode.json
+# with `"tools": true` AND num_ctx >= 16384 (ollama's 4096 default truncates the
+# tool schema and breaks tool invocation silently — scripts/bootstrap.sh builds
+# the right 16k variant). Override default (ollama/qwen3:8b-16k) via OPENCODE_MODEL.
 executor_providers:
   - claude
   - codex
+  - opencode
 
 # Hours to wait before retrying a quota-exhausted provider.
 # Defaults: claude=5.0 (Pro 5-hour window), codex=4.0

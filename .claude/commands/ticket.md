@@ -17,8 +17,48 @@ Read the full conversation so far. Identify every distinct unit of work discusse
 - **Design decisions** — for each non-obvious choice, state the decision and the alternative that was considered and rejected, and why. This is the durable record of *why* the code looks the way it does. The executor and the human reviewer both read this.
 - **Acceptance Criteria** — bulleted list, each criterion specific and testable. This is what the PR must satisfy.
 - **Scope Paths** — list of glob patterns for files that may be touched (e.g. `apps/api/src/**`, `CHANGELOG.md`). Use your best judgment from the discussion; leave empty if truly unclear.
+- **Subtasks** — per-file decomposition of the work. Each subtask is one file (or a tightly grouped pair like a schema + its migration) with explicit fields (Files, Skill, Tier, Depends on) and a short changes description. **This is the new contract** — the runner executes subtasks sequentially, one agent invocation per subtask. See "Subtask decomposition" below for the rules.
 - **Depends On** (optional) — list of ticket IDs (e.g. `HEL-3`) that must merge before this ticket can start. Empty for the first ticket in a chain. Future executor behavior: refuse to start a ticket whose dependencies are not merged. Today the human still gatekeeps by promoting to "Ready For AI" in dependency order — the convention captures intent so the factory can enforce it later without rewriting tickets.
 - **Notes** (optional) — walkthrough angles, gotchas, executor cautions. Things that don't fit above but the executor or reviewer should see.
+
+#### Subtask decomposition
+
+Tickets are decomposed into per-file subtasks at ticket-write time. The runner executes them one at a time — design happens here, execution is mechanical.
+
+Rules:
+
+1. **Per-file is the floor.** Each subtask touches one file (sometimes a tightly-coupled pair like `schema.ts` + its migration). Going finer (per-function) does not work — the agent needs the file as a unit.
+2. **Each subtask points at a skill, not a file.** Skill is canonical (`.ai/skills/api/service.md`). Do not include exemplar file pointers — they drift and erode skill quality. If the skill doesn't have enough detail for an agent to follow, fix the skill, don't paper over it with a file pointer.
+3. **Missing skill → write the skill first.** If a subtask would need a skill that doesn't exist, prepend a skill-creation subtask (Files: `.ai/skills/<area>/<task>.md`, depends_on: none) before the consuming subtask. The skill catalog grows organically as features are decomposed.
+4. **Every subtask must be executable by a small local model.** Each subtask runs on the local executor by default — write the body assuming the executor cannot reason its way out of ambiguity. The skill provides the pattern; the subtask body specifies what's variable for this case: exact column names, function signatures, branching algorithms in pseudocode, specific copy strings, layout grids. **If executing a subtask would require the agent to make a design decision** — choose between two algorithms, pick a layout, decide a naming convention — **the decomposition is not done.** Push the decision up into the subtask body until the agent's job is mechanical.
+5. **Subtasks must follow their skill, not redefine it.** The skill is the source of truth for the pattern. Don't restate the skill in the subtask body — assume the agent will read it. Use the subtask body only for what the skill cannot know: this feature's specific columns, this function's exact signature, this route's specific handlers, this dedup algorithm's branching. If you find yourself contradicting the skill in a subtask body, fix the skill instead.
+6. **Order matters.** Use `Depends on:` to declare ordering. The runner executes subtasks in document order but the explicit `Depends on:` is what humans and the runner both use to reason about correctness.
+7. **Tests run once, at the end.** Subtasks intentionally leave the codebase in a partially-broken state. Do not write subtasks whose AC includes "tests pass" — that's the ticket-level AC.
+8. **Don't decompose past meaningful work.** A subtask should accomplish something a reasonable engineer would call a unit of work. "Add the import statement" is not a subtask.
+
+Subtask markdown format (each block is one subtask):
+
+```
+### 1. <short imperative title>
+- Files: apps/api/src/myVendor/schema.ts
+- Skill: .ai/skills/api/schema.md
+- Depends on: (none)
+
+<changes paragraph or code block: exactly what changes in those files.
+Reference the skill for the pattern, but state the specifics here —
+column names, function signatures, branching algorithms in pseudocode,
+exact JSX layout — that the agent can't derive from the skill alone.
+Aim for a body the local model can execute mechanically. If you'd be
+making the decision while reading it, the agent will too.>
+```
+
+Fields in detail:
+
+- **Files** — comma-separated relative paths. Usually one. The subtask agent is told it may only touch these files.
+- **Skill** — path to the skill the subtask follows. Required.
+- **Depends on** — comma-separated subtask ids (e.g. `1, 2`) or `(none)`.
+
+If the discussion concluded that the ticket is small enough to be done in one shot (e.g. a typo fix in a single file), it is OK to omit Subtasks — the runner falls back to the legacy single-shot execution path. But for any ticket that touches more than one file or has more than a few ACs, write subtasks.
 
 Budgets are soft planning notes only. Do not include a Budget section unless the user explicitly asks for one.
 
@@ -147,6 +187,18 @@ The description passed to `create-issue` is structured Markdown. Some sections a
 <glob pattern>
 <glob pattern>
 
+## Subtasks
+
+### 1. <short imperative>
+- Files: <path>
+- Skill: <.ai/skills/...>
+- Depends on: <(none)|ids>
+
+<changes — concrete enough that a small local model can execute mechanically>
+
+### 2. <short imperative>
+...
+
 ## Depends On
 
 <ticket-id>
@@ -166,7 +218,7 @@ The description passed to `create-issue` is structured Markdown. Some sections a
 <repo_key>
 ```
 
-**Parsed by the factory** (per ADR-010 + the `Depends On` convention added here): `Acceptance Criteria` (required), `Scope Paths`, `Depends On`, `Skills`, `Notes`, `Target Repo`, `Budget`.
+**Parsed by the factory** (per ADR-010 + the `Depends On` convention added here): `Acceptance Criteria` (required), `Scope Paths`, `Subtasks`, `Depends On`, `Skills`, `Notes`, `Target Repo`, `Budget`.
 
 **Executor-facing context, not parsed**: `Context`, `Plan`, `Design decisions`.
 

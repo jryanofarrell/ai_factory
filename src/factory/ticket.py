@@ -1,9 +1,30 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+
+@dataclass
+class Subtask:
+    """A single-file unit of work within a ticket. Executed sequentially.
+
+    files: paths (relative to repo root) the subtask is allowed to touch — usually one.
+    changes: free-form description of what should change in those files.
+    skill: path to the .ai/skills/<area>/<task>.md file the subtask should follow.
+    tier_hint: optional 'local' | 'hosted'; routes to that provider first, falls back normally.
+    depends_on: list of subtask ids (e.g. ['1', '2']) that must precede this one in execution.
+    """
+
+    id: str
+    title: str
+    changes: str
+    files: list[str] = field(default_factory=list)
+    skill: str | None = None
+    tier_hint: str | None = None
+    depends_on: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -19,6 +40,7 @@ class Ticket:
     linear_id: str | None = None  # UUID used for Linear API write-back
     notes: str = ""
     skills: list[str] = field(default_factory=list)
+    subtasks: list[Subtask] = field(default_factory=list)
     raw_body: str = ""
 
     def to_markdown(self) -> str:
@@ -74,6 +96,8 @@ def parse_ticket(path: Path) -> Ticket:
     skills_raw = _extract_section(body, "Skills") or ""
     skills = [line.strip() for line in skills_raw.splitlines() if line.strip()]
 
+    subtasks = _parse_subtasks(_extract_section(body, "Subtasks") or "")
+
     return Ticket(
         id=str(fm["id"]),
         title=str(fm["title"]),
@@ -86,8 +110,79 @@ def parse_ticket(path: Path) -> Ticket:
         linear_id=fm.get("linear_id"),
         notes=_extract_section(body, "Notes") or "",
         skills=skills,
+        subtasks=subtasks,
         raw_body=body,
     )
+
+
+_SUBTASK_HEADER_RE = re.compile(r"^###\s+(?P<id>[^.\s]+)\.\s+(?P<title>.+?)\s*$")
+_SUBTASK_FIELD_RE = re.compile(r"^[-*]\s*(?P<key>Files?|Skill|Tier|Depends on)\s*:\s*(?P<val>.*)$",
+                               re.IGNORECASE)
+
+
+def _parse_subtasks(section: str) -> list[Subtask]:
+    """Parse the ``## Subtasks`` body.
+
+    Each subtask is a ``### N. Title`` block followed by bullet fields
+    (Files, Skill, Tier, Depends on) and a free-form changes paragraph.
+    Returns [] if the section is empty.
+    """
+    if not section.strip():
+        return []
+
+    lines = section.splitlines()
+    out: list[Subtask] = []
+    current: dict | None = None
+    changes_buf: list[str] = []
+
+    def flush() -> None:
+        if current is None:
+            return
+        current["changes"] = "\n".join(changes_buf).strip()
+        out.append(
+            Subtask(
+                id=current["id"],
+                title=current["title"],
+                files=current.get("files", []),
+                changes=current["changes"],
+                skill=current.get("skill"),
+                tier_hint=current.get("tier_hint"),
+                depends_on=current.get("depends_on", []),
+            )
+        )
+
+    for line in lines:
+        header = _SUBTASK_HEADER_RE.match(line)
+        if header:
+            flush()
+            current = {"id": header.group("id"), "title": header.group("title").strip()}
+            changes_buf = []
+            continue
+        if current is None:
+            continue
+        field_match = _SUBTASK_FIELD_RE.match(line)
+        if field_match:
+            key = field_match.group("key").lower()
+            val = field_match.group("val").strip()
+            if key.startswith("file"):
+                current["files"] = [p.strip() for p in re.split(r"[,\s]+", val) if p.strip()]
+            elif key == "skill":
+                current["skill"] = val or None
+            elif key == "tier":
+                current["tier_hint"] = val.lower() or None
+            elif key.startswith("depends"):
+                low = val.lower()
+                if low in ("", "(none)", "none"):
+                    current["depends_on"] = []
+                else:
+                    current["depends_on"] = [
+                        p.strip() for p in re.split(r"[,\s]+", val) if p.strip()
+                    ]
+        else:
+            changes_buf.append(line)
+
+    flush()
+    return out
 
 
 def _extract_section(body: str, heading: str) -> str | None:
