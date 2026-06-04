@@ -85,17 +85,152 @@ def test_run_uses_fresh_linear_tickets_not_stale_local_queue(tmp_path: Path) -> 
         acceptance_criteria="- fresh",
     )
 
+    from factory.runner import ChainResult
+
     with (
         patch(
             "factory.orchestrator.pull_tickets",
             return_value=PullResult(tickets=[fresh_ticket], written=["HEL-2"]),
         ) as pull,
         patch(
-            "factory.orchestrator.run_ticket",
-            return_value=RunResult(ticket_id="HEL-2", success=True, dry_run=True),
-        ) as run_ticket,
+            "factory.orchestrator.run_chain",
+            return_value=ChainResult(
+                chain_id="HEL-2",
+                branch=None,
+                pr_url=None,
+                per_ticket=[RunResult(ticket_id="HEL-2", success=True, dry_run=True)],
+                success=True,
+            ),
+        ) as run_chain_mock,
     ):
         run(manifest_path=manifest_path, no_cleanup=True, dry_run=True, api_key="test")
 
     pull.assert_called_once()
-    assert run_ticket.call_args.args[0].id == "HEL-2"
+    # run_chain receives a single-ticket chain.
+    chain_arg = run_chain_mock.call_args.args[0]
+    assert len(chain_arg) == 1
+    assert chain_arg[0].id == "HEL-2"
+
+
+def test_unmerged_external_dep_refuses_to_run(tmp_path: Path, capsys) -> None:
+    """HEL-2 deps on HEL-1; HEL-1 not in queue. Linear says HEL-1 is 'started'
+    (e.g. In Review). HEL-2 must be refused with an ERROR, no chain run."""
+    from factory.runner import ChainResult
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "queue_dir: .factory/queue",
+                "repos:",
+                "  hello:",
+                "    github: tester/hello",
+                "    default_branch: main",
+                "    linear_team: HEL",
+                f"    local_path: {repo_path}",
+            ]
+        )
+    )
+    # Only HEL-2 is queued; HEL-1 is not.
+    dependent = Ticket(
+        id="HEL-2",
+        title="dependent",
+        target_repo="hello",
+        acceptance_criteria="- depends on HEL-1",
+        depends_on=["HEL-1"],
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.checked = []
+
+        def is_issue_merged(self, identifier: str) -> bool:
+            self.checked.append(identifier)
+            return False  # HEL-1 is NOT in a completed state
+
+    fake = FakeClient()
+
+    with (
+        patch(
+            "factory.orchestrator.pull_tickets",
+            return_value=PullResult(tickets=[dependent], written=["HEL-2"]),
+        ),
+        patch("factory.orchestrator.LinearClient", return_value=fake),
+        patch(
+            "factory.orchestrator.run_chain",
+            return_value=ChainResult(
+                chain_id="HEL-2", branch=None, pr_url=None, success=False
+            ),
+        ) as run_chain_mock,
+    ):
+        run(manifest_path=manifest_path, no_cleanup=True, dry_run=False, api_key="test")
+
+    # Linear was consulted for HEL-1's state.
+    assert fake.checked == ["HEL-1"]
+    # run_chain was never called because no chain was eligible.
+    run_chain_mock.assert_not_called()
+    # ERROR message was printed.
+    err = capsys.readouterr().err
+    assert "ERROR HEL-2" in err
+    assert "HEL-1" in err
+
+
+def test_merged_external_dep_allows_run(tmp_path: Path) -> None:
+    """Same setup as above but Linear says HEL-1 IS merged. HEL-2 runs alone."""
+    from factory.runner import ChainResult
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "queue_dir: .factory/queue",
+                "repos:",
+                "  hello:",
+                "    github: tester/hello",
+                "    default_branch: main",
+                "    linear_team: HEL",
+                f"    local_path: {repo_path}",
+            ]
+        )
+    )
+    dependent = Ticket(
+        id="HEL-2",
+        title="dependent",
+        target_repo="hello",
+        acceptance_criteria="- depends on HEL-1",
+        depends_on=["HEL-1"],
+    )
+
+    class FakeClient:
+        def is_issue_merged(self, identifier: str) -> bool:
+            return identifier == "HEL-1"
+
+    with (
+        patch(
+            "factory.orchestrator.pull_tickets",
+            return_value=PullResult(tickets=[dependent], written=["HEL-2"]),
+        ),
+        patch("factory.orchestrator.LinearClient", return_value=FakeClient()),
+        patch(
+            "factory.orchestrator.run_chain",
+            return_value=ChainResult(
+                chain_id="HEL-2",
+                branch=None,
+                pr_url=None,
+                per_ticket=[RunResult(ticket_id="HEL-2", success=True)],
+                success=True,
+            ),
+        ) as run_chain_mock,
+    ):
+        run(manifest_path=manifest_path, no_cleanup=True, dry_run=False, api_key="test")
+
+    # HEL-2 ran as a single-ticket chain because its dep was verified merged.
+    run_chain_mock.assert_called_once()
+    chain_arg = run_chain_mock.call_args.args[0]
+    assert [t.id for t in chain_arg] == ["HEL-2"]

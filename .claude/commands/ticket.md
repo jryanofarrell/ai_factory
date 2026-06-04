@@ -18,7 +18,7 @@ Read the full conversation so far. Identify every distinct unit of work discusse
 - **Acceptance Criteria** — bulleted list, each criterion specific and testable. This is what the PR must satisfy.
 - **Scope Paths** — list of glob patterns for files that may be touched (e.g. `apps/api/src/**`, `CHANGELOG.md`). Use your best judgment from the discussion; leave empty if truly unclear.
 - **Subtasks** — per-file decomposition of the work. Each subtask is one file (or a tightly grouped pair like a schema + its migration) with explicit fields (Files, Skill, Tier, Depends on) and a short changes description. **This is the new contract** — the runner executes subtasks sequentially, one agent invocation per subtask. See "Subtask decomposition" below for the rules.
-- **Depends On** (optional) — list of ticket IDs (e.g. `HEL-3`) that must merge before this ticket can start. Empty for the first ticket in a chain. Future executor behavior: refuse to start a ticket whose dependencies are not merged. Today the human still gatekeeps by promoting to "Ready For AI" in dependency order — the convention captures intent so the factory can enforce it later without rewriting tickets.
+- **Depends On** (optional) — list of ticket IDs (e.g. `HEL-3`) that must merge before this ticket can start. Per ADR-019, when dependent tickets are both in the queue, the factory groups them into a chain: one shared branch, one PR, one commit per ticket. Cross-repo deps refuse to run. Cycles abort the whole run. Max chain depth 5; past that the chain splits. Empty for the first ticket in a chain.
 - **Notes** (optional) — walkthrough angles, gotchas, executor cautions. Things that don't fit above but the executor or reviewer should see.
 
 #### Subtask decomposition

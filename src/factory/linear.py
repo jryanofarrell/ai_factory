@@ -78,6 +78,7 @@ query($identifier: String!) {
     identifier
     title
     url
+    state { name type }
   }
 }
 """
@@ -191,6 +192,28 @@ class LinearClient:
     def get_issue_by_identifier(self, identifier: str) -> dict[str, Any] | None:
         data = self._query(ISSUE_BY_IDENTIFIER_QUERY, {"identifier": identifier})
         return data.get("issue")
+
+    def is_issue_merged(self, identifier: str) -> bool:
+        """Return True iff Linear reports the issue in a 'completed'-typed state.
+
+        Linear's workflow state has a normalized `type` field across workspaces:
+        `backlog`, `unstarted`, `started`, `completed`, `canceled`, `triage`.
+        We treat `completed` as "merged to main" — that's the universal "Done"
+        category regardless of what the user named the column. "In Review" is
+        of type `started`, NOT `completed` — a PR pending merge does not count.
+
+        Returns False for missing issues, non-completed states, and any API
+        error. Callers wanting to distinguish "definitely not merged" from
+        "could not verify" should use ``get_issue_by_identifier`` directly.
+        """
+        try:
+            issue = self.get_issue_by_identifier(identifier)
+        except LinearError:
+            return False
+        if not issue:
+            return False
+        state = issue.get("state") or {}
+        return str(state.get("type", "")).lower() == "completed"
 
     def update_issue(
         self,

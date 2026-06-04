@@ -232,6 +232,55 @@ def test_subtask_section_with_only_whitespace(tmp_path: Path) -> None:
     assert t.subtasks == []
 
 
+DEPENDS_TICKET = """\
+---
+id: THM-19
+title: Depends on two others
+target_repo: thms-platform
+---
+
+## Acceptance Criteria
+
+- x
+
+## Depends On
+
+THM-17
+THM-18
+"""
+
+
+def test_depends_on_parsed(tmp_path: Path) -> None:
+    t = parse_ticket(write(tmp_path, DEPENDS_TICKET))
+    assert t.depends_on == ["THM-17", "THM-18"]
+
+
+def test_depends_on_empty_when_section_absent(tmp_path: Path) -> None:
+    t = parse_ticket(write(tmp_path, VALID_TICKET))
+    assert t.depends_on == []
+
+
+def test_depends_on_none_sentinel(tmp_path: Path) -> None:
+    body = DEPENDS_TICKET.replace("THM-17\nTHM-18", "(none)")
+    t = parse_ticket(write(tmp_path, body))
+    assert t.depends_on == []
+
+
+def test_depends_on_comma_separated_one_line(tmp_path: Path) -> None:
+    body = DEPENDS_TICKET.replace("THM-17\nTHM-18", "THM-17, THM-18")
+    t = parse_ticket(write(tmp_path, body))
+    assert t.depends_on == ["THM-17", "THM-18"]
+
+
+def test_depends_on_bullets_and_dedupe(tmp_path: Path) -> None:
+    body = DEPENDS_TICKET.replace(
+        "THM-17\nTHM-18",
+        "- THM-17\n- THM-18\n- THM-17",  # dup
+    )
+    t = parse_ticket(write(tmp_path, body))
+    assert t.depends_on == ["THM-17", "THM-18"]
+
+
 def test_subtask_minimal_fields(tmp_path: Path) -> None:
     body = """\
 ---

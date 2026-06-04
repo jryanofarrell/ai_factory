@@ -41,6 +41,7 @@ class Ticket:
     notes: str = ""
     skills: list[str] = field(default_factory=list)
     subtasks: list[Subtask] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=list)
     raw_body: str = ""
 
     def to_markdown(self) -> str:
@@ -61,6 +62,8 @@ class Ticket:
             parts.append(f"## Notes\n\n{self.notes}")
         if self.skills:
             parts.append("## Skills\n\n" + "\n".join(self.skills))
+        if self.depends_on:
+            parts.append("## Depends On\n\n" + "\n".join(self.depends_on))
 
         fm_str = yaml.dump(fm, default_flow_style=False, allow_unicode=True)
         return f"---\n{fm_str}---\n\n" + "\n\n".join(parts) + "\n"
@@ -98,6 +101,8 @@ def parse_ticket(path: Path) -> Ticket:
 
     subtasks = _parse_subtasks(_extract_section(body, "Subtasks") or "")
 
+    depends_on = _parse_depends_on(_extract_section(body, "Depends On") or "")
+
     return Ticket(
         id=str(fm["id"]),
         title=str(fm["title"]),
@@ -111,6 +116,7 @@ def parse_ticket(path: Path) -> Ticket:
         notes=_extract_section(body, "Notes") or "",
         skills=skills,
         subtasks=subtasks,
+        depends_on=depends_on,
         raw_body=body,
     )
 
@@ -118,6 +124,32 @@ def parse_ticket(path: Path) -> Ticket:
 _SUBTASK_HEADER_RE = re.compile(r"^###\s+(?P<id>[^.\s]+)\.\s+(?P<title>.+?)\s*$")
 _SUBTASK_FIELD_RE = re.compile(r"^[-*]\s*(?P<key>Files?|Skill|Tier|Depends on)\s*:\s*(?P<val>.*)$",
                                re.IGNORECASE)
+
+
+def _parse_depends_on(section: str) -> list[str]:
+    """Parse the ticket-level ``## Depends On`` body.
+
+    Format is one ticket ID per line (per /ticket skill description spec).
+    Tolerant of comma-separated IDs on a single line, leading bullet markers,
+    and the literal ``(none)`` / ``none`` sentinels which collapse to an empty list.
+    Returns deduplicated IDs in document order.
+    """
+    if not section.strip():
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in section.splitlines():
+        line = raw.strip().lstrip("-*").strip()
+        if not line:
+            continue
+        if line.lower() in ("(none)", "none"):
+            continue
+        for tok in re.split(r"[,\s]+", line):
+            tok = tok.strip()
+            if tok and tok not in seen:
+                seen.add(tok)
+                out.append(tok)
+    return out
 
 
 def _parse_subtasks(section: str) -> list[Subtask]:
