@@ -270,4 +270,55 @@ Two enforcement points support the rule:
 
 **Consequences:** Skill scaffolding works for non-web repos without per-domain code changes. The HEL-6 `endpoint.md` mistake is structurally ruled out — the rule now authorizes the executor's good naming instinct (`api-client.md`) and rejects its bad one (`endpoint.md`). The soft warning catches scope/skill mismatches at ticket-creation time rather than waiting for an executor or reviewer to notice. The rigid type list in ADR-015 is no longer load-bearing — `/ticket` and ADR-015 are updated to refer to "recurring file-type patterns" + the naming rule rather than enumerating types.
 
+## ADR-017: OpenCode + ollama as a third local executor tier
+
+**Status:** Accepted
+
+**Context:** Per ADR-009 the factory falls back from Claude to Codex when the metered provider exhausts. When both exhaust, the session ends and remaining queued tickets wait for the next quota window. For an always-on host processing a heavy backlog (the gaming-PC target), this leaves throughput on the table — hours of compute that the factory cannot use. A free, unmetered third tier closes the gap.
+
+Three open-source coding-agent options were investigated: OpenCode (SST), OpenHands, and Aider, each driven by ollama serving a coding model locally. OpenCode won on three counts: (a) it has a non-interactive `opencode run` subcommand with `--format json` event streaming, mirroring the contract the codex provider already uses; (b) it speaks OpenAI-compatible API to ollama, the same surface other tools use; (c) its CLI flags drop cleanly alongside the existing claude/codex provider modules.
+
+Three silent-failure cliffs were found during validation, none of them documented upfront. All three must hold or the model emits text describing tool calls instead of invoking them, and OpenCode exits 0 with no file changes — looking like the agent simply chose not to act. (1) The model must advertise `tools` capability — confirmed via `ollama show <model>`. Qwen2.5-Coder does not; Qwen3 and gpt-oss do. (2) The model must be registered in `~/.config/opencode/opencode.json` with `"tools": true`. (3) `num_ctx` must be ≥16384 — the ollama runtime default of 4096 truncates the tool schema before the model sees it. The fix is a Modelfile variant (`FROM <model>\nPARAMETER num_ctx 16384`).
+
+Hardware ceilings are real and surfaced during validation. Models that emit OpenAI-compatible `tool_calls` AND fit a 16 GB Mac are scarce: `qwen3:8b-16k` (~5 GB resident) works comfortably; `gpt-oss:20b` (~13 GB) triggers severe swap thrashing on a 16 GB unified-memory machine (confirmed by hitting it on the dev Mac). Hosts with ≥24 GB can run `gpt-oss:20b` or `qwen3-coder:30b` for higher-quality diffs.
+
+**Decision:** Add `opencode` as a third executor provider after `claude` and `codex` in `manifest.yaml`'s `executor_providers`. Implementation in `src/factory/providers/opencode.py` follows the codex.py shape: spawn `opencode run --format json --dir <repo> --dangerously-skip-permissions -m ollama/<model>`, stream-parse events for tokens / output / errors / tool_use, return an `AgentResult`. Default model is `ollama/qwen3:8b-16k`, overridable via the `OPENCODE_MODEL` environment variable.
+
+The three silent-failure rules are encoded in the provider's module docstring so future Claude sessions reading the file get the warning. `scripts/bootstrap.sh` handles installation on macOS (Homebrew path) and Debian/Ubuntu Linux (apt + curl-installer path), including pulling the base model and creating the 16k Modelfile variant.
+
+`QuotaTracker` treats opencode as a normal provider entry, but it never sets `usage_limit_hit` — the local tier is always available. If all three providers fail or are unreachable, the existing exhausted-session flow runs.
+
+**Consequences:** Throughput unblocked when claude+codex exhaust on heavy backlogs. The local tier is *capable* of feature work but only when paired with per-file subtask decomposition (ADR-018) — without that, an 8B model produces garbage on real tickets and trips the scope/test/secret gates. Bootstrap goes from ~5 min to ~15 min on a fresh host (multi-GB model download dominates). On 16 GB Macs the viable model ceiling is 8B; ≥24 GB hosts unlock the 20B+ tier for better diffs.
+
+## ADR-018: Per-file subtask decomposition
+
+**Status:** Accepted
+
+**Context:** Tickets historically ran as a single agent shot: build a prompt with the full AC and scope, hand it to claude (or codex on fallback), check the diff against scope, run tests, open PR. This works for tickets up to roughly 5–6 acceptance criteria touching a few files. Past that, single-shot execution degrades: the agent loses track partway through a long AC list, designs inconsistent shapes across files, and exits with a sprawling diff that trips the scope check or breaks tests in ways the auto-repair step cannot untangle. THM-21 (apply patterns to 9 modules) and THM-12 (vendors rolodex spanning schema → manager → service → routes → web pages) were the breakers.
+
+Three observations pushed toward decomposition. First, smaller per-call agent context produces better outputs from every tier — claude included, not just the local tier introduced in ADR-017. Second, the local tier is fundamentally incapable of doing a 9-AC ticket in one shot, so it'd be permanently sidelined without a way to feed it bite-sized work. Third, a human engineer building one of these tickets does it one file at a time, accepting temporarily-broken state between commits and running tests only at the end. The factory was bundling design and implementation into one agent invocation; the natural decomposition is **design once, then execute mechanically**.
+
+Two splittings were considered and rejected. **Multiple Linear tickets per feature** (one PR each) fragments architectural intent across PRs and adds bookkeeping overhead. **Execution-time chunking** (one ticket, agent runs in N segments) leaves each segment's agent blind to prior segments' design reasoning — it only sees their diffs — and failures partway through leave the PR in a half-built state that's hard to untangle.
+
+What survived: **decomposition at ideation, sequential execution under one PR.** All the hard reasoning happens once during `/ideate` and `/ticket`. Subtask bodies carry the design (exact column names, function signatures, branching algorithms in pseudocode, layout grids, copy strings). Each subtask is one file. The runner executes each subtask as its own agent call but tests only once at the end of the whole ticket. One PR per ticket, one diff to review, but the agent never juggles more than one file's worth of design at a time.
+
+**Decision:** Tickets carry a `## Subtasks` section, parsed by `src/factory/ticket.py` into a `Subtask` dataclass (`id`, `title`, `files`, `changes`, `skill`, `depends_on`). Each subtask is markdown of the form:
+
+```
+### N. <imperative title>
+- Files: <one or two paths>
+- Skill: <.ai/skills/...>
+- Depends on: <(none) | comma-separated ids>
+
+<changes paragraph or code block, detailed enough that a small local
+model can execute mechanically>
+```
+
+When `ticket.subtasks` is non-empty, `_run_subtask_loop` in `src/factory/runner.py` executes them sequentially. Each subtask gets its own agent invocation with a prompt containing: (a) project rules, (b) the overall ticket AC as context, (c) this subtask's spec, (d) the referenced skill content loaded inline, (e) lists of completed and remaining subtasks, (f) the current `git diff HEAD` so the agent sees prior subtasks' work. The prompt explicitly instructs the agent to touch only listed files, not commit, not run tests, and stop. Failure (non-zero exit, timeout, usage-limit) stops the loop, preserves the branch, and propagates to the existing failure handlers. After all subtasks complete, the existing install/tests/secret-scan/commit/PR flow runs once.
+
+The `/ticket` and `/ideate` skill prompts encode the decomposition discipline. Subtasks reference skills, not files — no exemplar field, because exemplar pointers drift and erode skill quality. Missing skill → prepend a skill-creation subtask before the consuming one; the skill catalog grows organically as features are decomposed. Per-file is the granularity floor; per-function loses too much semantic context. **If executing a subtask would require the agent to make a design decision, the decomposition is not done** — push the decision into the subtask body until execution is mechanical.
+
+Tickets without `## Subtasks` continue to run on the existing single-shot path. Backward compatible.
+
+**Consequences:** All three executor tiers (claude, codex, opencode) get smaller per-call contexts and produce more focused diffs. The local tier (ADR-017) becomes viable for real feature work because the reasoning is upstream. Ideation becomes more substantive work — subtask bodies are longer and require reading the relevant skill files during the conversation, not just naming them. Failure recovery is fail-fast: a broken subtask aborts the ticket; no cross-subtask revision in v1. The factory's atomic-PR guarantee is preserved — one ticket, one branch, one PR — but the agent-side execution is no longer monolithic. The `tier_hint` field exists on the `Subtask` dataclass for future use but is not exercised by the current `/ticket` skill prompt: every subtask defaults to local-first via the standard fallback order.
 
