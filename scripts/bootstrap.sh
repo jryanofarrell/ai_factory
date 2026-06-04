@@ -28,15 +28,17 @@ error() { printf "\033[1;31m[bootstrap]\033[0m %s\n" "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1; }
 
 # ---------- OS detection ----------
+# `uname -s` returns the kernel name (Darwin / Linux), not the OS marketing
+# name. We map to the OS the user expects to see.
 case "$(uname -s)" in
-  Darwin) OS="darwin" ;;
-  Linux)  OS="linux"  ;;
-  *) error "Unsupported OS: $(uname -s). This script targets macOS or Linux." ;;
+  Darwin) OS="macos"; OS_LABEL="macOS" ;;
+  Linux)  OS="linux"; OS_LABEL="Linux" ;;
+  *) error "Unsupported OS: $(uname -s). This script targets macOS or Debian/Ubuntu Linux." ;;
 esac
-info "Detected OS: $OS"
+info "Detected OS: $OS_LABEL"
 
 # ---------- package manager prerequisites ----------
-if [ "$OS" = "darwin" ]; then
+if [ "$OS" = "macos" ]; then
   if ! need brew; then
     error "Homebrew not found. Install from https://brew.sh first."
   fi
@@ -57,7 +59,7 @@ fi
 
 # ---------- gh (GitHub CLI) ----------
 if ! need gh; then
-  if [ "$OS" = "darwin" ]; then
+  if [ "$OS" = "macos" ]; then
     info "Installing gh via Homebrew..."
     brew install gh
   else
@@ -76,7 +78,7 @@ fi
 
 # ---------- gitleaks ----------
 if ! need gitleaks; then
-  if [ "$OS" = "darwin" ]; then
+  if [ "$OS" = "macos" ]; then
     info "Installing gitleaks via Homebrew..."
     brew install gitleaks
   else
@@ -109,7 +111,7 @@ fi
 
 # ---------- Node (for codex CLI) ----------
 if ! need node; then
-  if [ "$OS" = "darwin" ]; then
+  if [ "$OS" = "macos" ]; then
     info "Installing Node.js via Homebrew..."
     brew install node
   else
@@ -139,7 +141,7 @@ fi
 
 # ---------- ollama ----------
 if ! need ollama; then
-  if [ "$OS" = "darwin" ]; then
+  if [ "$OS" = "macos" ]; then
     info "Installing ollama via Homebrew..."
     brew install ollama
   else
@@ -152,7 +154,7 @@ fi
 
 # Start ollama if it isn't already serving
 if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-  if [ "$OS" = "darwin" ]; then
+  if [ "$OS" = "macos" ]; then
     info "Starting ollama via Homebrew services..."
     brew services start ollama || true
     # brew services takes a moment to actually bring the daemon up
