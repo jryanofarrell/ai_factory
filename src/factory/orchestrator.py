@@ -141,17 +141,33 @@ def run(
         return
 
     # Step 5b: group into dependency chains (ADR-019)
-    # v1: trust the user. Any dep referenced in a parsed ticket that is NOT
-    # itself in the queue is treated as already-merged. The chain grouper
-    # still surfaces real conflicts: cycles, cross-repo deps.
+    # For each ticket dep referenced but NOT in the queue, query Linear:
+    # the dep counts as satisfied only if its state.type is `completed`.
+    # Anything else (Backlog, In Progress, In Review, Failed) → dependent
+    # ticket refuses to run with an error. If no Linear client is available
+    # (dry run, no API key), fall back to trust-the-user with a warning.
     parsed_ids = {t.id for t, _ in parsed}
     referenced = {dep for t, _ in parsed for dep in t.depends_on}
-    merged_assumed = referenced - parsed_ids
+    needs_verify = referenced - parsed_ids
+    merged_verified: set[str] = set()
+
+    if needs_verify:
+        if client is None:
+            typer.echo(
+                f"WARN: cannot verify {len(needs_verify)} external dep(s) — no Linear "
+                "client (dry-run or no API key). Treating as merged.",
+                err=True,
+            )
+            merged_verified = set(needs_verify)
+        else:
+            for dep_id in sorted(needs_verify):
+                if client.is_issue_merged(dep_id):
+                    merged_verified.add(dep_id)
 
     try:
         grouped = group_into_chains(
             [t for t, _ in parsed],
-            merged_ticket_ids=merged_assumed,
+            merged_ticket_ids=merged_verified,
         )
     except ChainCycleError as e:
         typer.echo(f"\nERROR: dependency cycle in queue — {e}", err=True)
@@ -162,14 +178,14 @@ def run(
 
     for refused_ticket, bad_deps in grouped.skipped_cross_repo:
         typer.echo(
-            f"REFUSE {refused_ticket.id}: cross-repo dependency on "
-            f"{', '.join(bad_deps)} (different target_repo). Skipping.",
+            f"ERROR {refused_ticket.id}: cross-repo dependency on "
+            f"{', '.join(bad_deps)} (different target_repo). Refusing to run.",
             err=True,
         )
-    for skipped_ticket, missing in grouped.skipped_unsatisfied:
+    for refused_ticket, missing in grouped.skipped_unsatisfied:
         typer.echo(
-            f"SKIP {skipped_ticket.id}: depends on missing ticket(s) "
-            f"{', '.join(missing)} not in queue and not merged.",
+            f"ERROR {refused_ticket.id}: depends on {', '.join(missing)} which "
+            "is neither in the queue nor merged on main. Refusing to run.",
             err=True,
         )
 
