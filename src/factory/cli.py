@@ -172,6 +172,65 @@ def setup_team(
 
 
 @app.command()
+def new_project(
+    name: str = typer.Option(..., "--name", help="Linear team name, e.g. 'Billy AI'."),
+    key: str = typer.Option(..., "--key", help="Linear team key/abbreviation, e.g. BIL."),
+    repo: str = typer.Option(
+        ..., "--repo", help="GitHub repo as owner/name, e.g. jryanofarrell/billy-ai."
+    ),
+    visibility: str = typer.Option("private", "--visibility", help="'public' or 'private'."),
+    description: str | None = typer.Option(None, "--description", help="GitHub repo description."),
+    repo_key: str | None = typer.Option(
+        None, "--repo-key", help="Manifest key + repos/<key>/ dir (default: repo name)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the plan without creating anything."
+    ),
+    manifest: Path | None = typer.Option(None, "--manifest", help="Path to manifest.yaml."),
+) -> None:
+    """Provision a new target project: Linear team + label, GitHub repo, clone, manifest entry."""
+    import os
+
+    from dotenv import load_dotenv
+
+    from .linear import LinearError
+    from .new_project import provision_project
+
+    load_dotenv()
+    api_key = os.environ.get("LINEAR_API_KEY")
+
+    try:
+        result = provision_project(
+            team_name=name,
+            team_key=key,
+            github=repo,
+            visibility=visibility,
+            description=description,
+            repo_key=repo_key,
+            manifest_path=manifest,
+            api_key=api_key,
+            dry_run=dry_run,
+        )
+    except (ValueError, FileNotFoundError, RuntimeError, LinearError) as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    for note in result.notes:
+        typer.echo(note)
+
+    if not dry_run:
+        typer.echo("")
+        typer.echo(
+            f"Project '{result.repo_key}' provisioned (team {result.team_key}, "
+            f"{result.repo_full}, clone at {result.local_path})."
+        )
+        typer.echo(
+            "Next: draft its first ticket(s) with /ticket — the first ticket scaffolds the "
+            "repo. Mark them 'Ready For AI' in Linear, then run `factory run`."
+        )
+
+
+@app.command()
 def update_issue(
     identifier: str = typer.Option(
         ..., "--identifier", help="Linear issue identifier (e.g. THM-5)."

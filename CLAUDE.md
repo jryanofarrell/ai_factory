@@ -51,4 +51,4 @@ Before editing inside a target repo, run `git -C repos/<project> branch --show-c
 
 ## Slash commands
 
-Factory-level workflows live in `.claude/commands/` as slash commands (`/ideate`, `/ticket`, `/run`, `/ai-files`). They are user-triggered — Claude does not auto-invoke them. If a genuinely auto-invokable capability is ever needed, add it under `.claude/skills/<name>/SKILL.md` (separate from commands).
+Factory-level workflows live in `.claude/commands/` as slash commands (`/new-project`, `/ideate`, `/ticket`, `/run`, `/ai-files`). They are user-triggered — Claude does not auto-invoke them. `/new-project` onboards a brand-new target repo (creates the Linear team + GitHub repo, clones it, registers it in the manifest); see ADR-020. If a genuinely auto-invokable capability is ever needed, add it under `.claude/skills/<name>/SKILL.md` (separate from commands).

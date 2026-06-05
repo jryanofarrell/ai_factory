@@ -52,7 +52,7 @@
 
 **GitHub (target repositories).** Target repos are where the code lives. The executor opens branches and pull requests here. Branch protection rules on the default branch require human approval before merge.
 
-**The factory CLI (`factory`).** A small Python CLI (Typer) that orchestrates the loop, invoked manually on the user's local machine. Entry points added per phase: Phase 1 adds `factory run`, Phase 2 adds `factory pull`, Phase 3 adds `factory work`, Phase 5 adds `factory ideate`. In Phase 0 the only command is `factory version`.
+**The factory CLI (`factory`).** A small Python CLI (Typer) that orchestrates the loop, invoked manually on the user's local machine. Entry points added per phase: Phase 1 adds `factory run`, Phase 2 adds `factory pull`, Phase 3 adds `factory work`, Phase 5 adds `factory ideate`. In Phase 0 the only command is `factory version`. `factory new-project` (ADR-020) sits one level up from the loop: it provisions a brand-new target project — creates the Linear team, creates the GitHub repo, clones it to `repos/<key>/`, and registers it in the manifest — so the team↔repo↔manifest mapping below is established by the factory rather than by hand.
 
 **The local manifest (`manifest.yaml`).** A gitignored YAML file listing every registered target repo with host-specific configuration: local filesystem path, build/test commands, default branch, and the Linear team key. `manifest.example.yaml` is the checked-in template.
 
