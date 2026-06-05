@@ -227,6 +227,31 @@ class LinearClient:
         )
         return data["issueUpdate"]["issue"]
 
+    def create_team(self, name: str, key: str) -> dict[str, Any]:
+        """Create a Linear team via the teamCreate mutation.
+
+        ``key`` is the short uppercase identifier (e.g. "BIL") that prefixes the
+        team's issues. Raises ``LinearError`` if Linear reports failure — most
+        commonly a workspace plan that caps team count (the Free tier), or a
+        key/name collision. Callers should check ``get_team_id`` first and only
+        create when it returns ``None`` (idempotency lives in the caller).
+        """
+        data = self._query(
+            """
+            mutation($name: String!, $key: String!) {
+              teamCreate(input: { name: $name, key: $key }) {
+                success
+                team { id key name }
+              }
+            }
+            """,
+            {"name": name, "key": key},
+        )
+        result = data["teamCreate"]
+        if not result["success"]:
+            raise LinearError(f"Failed to create team '{name}' (key {key})")
+        return result["team"]
+
     def create_label(self, team_id: str, name: str) -> str:
         data = self._query(
             """

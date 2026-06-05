@@ -23,6 +23,11 @@ executor_providers:
 #   claude: 5.0
 #   codex: 4.0
 
+# Registered target repos. Add entries by hand, or onboard a brand-new project
+# (creates the Linear team + GitHub repo, clones it, and appends a block here) with:
+#   uv run factory new-project --name "Billy AI" --key BIL \
+#     --repo jryanofarrell/billy-ai --visibility private
+# See ADR-020. Run with --dry-run first to preview.
 repos:
   thms-platform:
     github: toms-hms/thms-platform
