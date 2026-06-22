@@ -184,7 +184,7 @@ These risks were identified during the design conversation but are not turned in
 
 **Context:** Hard `budget_minutes` enforcement caused useful work to be killed mid-run, leaving otherwise salvageable branches to be finished manually. In practice, budgets are more useful as ticket-sizing guidance than as strict execution limits. The human can decide whether to split work or let an overrun continue after reviewing progress and PR scope.
 
-**Decision:** `budget_tokens` and `budget_minutes` remain parseable metadata for old tickets and optional planning notes for new tickets, but the executor does not abort solely because a ticket exceeds them. Ticket creation skills should omit `## Budget` by default and include it only when the user explicitly asks for soft sizing notes. Runtime safety continues to rely on scope checks, tests, quota-aware provider fallback, secret scanning, and human PR review.
+**Decision:** `budget_tokens` and `budget_minutes` remain parseable metadata for old tickets and optional planning notes for new tickets, but the executor does not abort solely because a ticket exceeds them. Ticket creation recipes should omit `## Budget` by default and include it only when the user explicitly asks for soft sizing notes. Runtime safety continues to rely on scope checks, tests, quota-aware provider fallback, secret scanning, and human PR review.
 
 **Consequences:** Long-running tickets can finish instead of being terminated at an arbitrary minute mark. Operators must use judgment when a ticket is clearly too broad; agents should preserve coherent partial work and report overruns instead of sprawling indefinitely. Historical tickets with `## Budget` sections still parse, but those values are informational.
 
@@ -205,7 +205,7 @@ These risks were identified during the design conversation but are not turned in
   .ai/
     rules/core.md       - always-applicable constraints
     context/<area>.md   - codebase snapshot per area, loaded on demand
-    skills/
+    recipes/
       ai-structure.md   - map of the .ai/ layout
       <area>/<task>.md  - procedural how-to guides, added incrementally
 ```
@@ -214,9 +214,9 @@ These risks were identified during the design conversation but are not turned in
 
 Bootstrapping and re-audit are handled by the `/ai-files` slash command (`.claude/commands/ai-files.md` in this repo). The factory's first action when entering a target repo missing these files is to invoke `/ai-files`. The command populates content by reading actual code, never with TODO stubs.
 
-`.ai/skills/<area>/<task>.md` files are added incrementally as patterns repeat, not pre-scaffolded as empty stubs.
+`.ai/recipes/<area>/<task>.md` files are added incrementally as patterns repeat, not pre-scaffolded as empty stubs.
 
-**Consequences:** New target repos can be onboarded with a single command, with content drawn from actual code rather than placeholders. Both providers see the same context — no provider-specific drift. The `/ticket` skill already scans `.ai/skills/` and pins relevant skill paths into each ticket description, so once a repo's skills tree grows, the ticket flow automatically picks up the new guidance. The convention is enforced at the command level rather than as a hard runtime check; a repo without the layout is not blocked from being worked on, but the factory's quality will degrade without it.
+**Consequences:** New target repos can be onboarded with a single command, with content drawn from actual code rather than placeholders. Both providers see the same context — no provider-specific drift. The `/ticket` recipe already scans `.ai/recipes/` and pins relevant recipe paths into each ticket description, so once a repo's recipes tree grows, the ticket flow automatically picks up the new guidance. The convention is enforced at the command level rather than as a hard runtime check; a repo without the layout is not blocked from being worked on, but the factory's quality will degrade without it.
 
 ---
 
@@ -232,43 +232,43 @@ Bootstrapping and re-audit are handled by the `/ai-files` slash command (`.claud
 
 ---
 
-## ADR-015: Per-file-type skills are scaffolded at bootstrap when a matching file exists
+## ADR-015: Per-file-type recipes are scaffolded at bootstrap when a matching file exists
 
-**Status:** Accepted — supersedes the "skills added incrementally, not pre-scaffolded" portion of ADR-013
+**Status:** Accepted — supersedes the "recipes added incrementally, not pre-scaffolded" portion of ADR-013
 
-**Context:** ADR-013 specified that `.ai/skills/<area>/<task>.md` files be added incrementally as patterns repeat, to avoid empty stubs polluting agent context. The Hello Patient take-home was scaffolded under that rule (HEL-1) with only `.ai/skills/ai-structure.md`. Subsequent tickets (HEL-2 added models; HEL-3 added routes/services/schemas/tests; HEL-4 added components/lib/types) each created new instances of canonical file types without any skill to read or update. The result: no enforcement of conventions across tickets, no place to record the pattern decisions made along the way, and a self-review pass (HEL-6) that retroactively had to scaffold ten skill files at once.
+**Context:** ADR-013 specified that `.ai/recipes/<area>/<task>.md` files be added incrementally as patterns repeat, to avoid empty stubs polluting agent context. The Hello Patient take-home was scaffolded under that rule (HEL-1) with only `.ai/recipes/ai-structure.md`. Subsequent tickets (HEL-2 added models; HEL-3 added routes/services/schemas/tests; HEL-4 added components/lib/types) each created new instances of canonical file types without any recipe to read or update. The result: no enforcement of conventions across tickets, no place to record the pattern decisions made along the way, and a self-review pass (HEL-6) that retroactively had to scaffold ten recipe files at once.
 
-The original concern that led to ADR-013 — empty stubs polluting context — turned out to be the wrong concern. The actual failure mode is: when a skill doesn't exist, the convention isn't documented anywhere, and the next ticket reinvents it. Empty stubs are bad; **no skill at all is worse**.
+The original concern that led to ADR-013 — empty stubs polluting context — turned out to be the wrong concern. The actual failure mode is: when a recipe doesn't exist, the convention isn't documented anywhere, and the next ticket reinvents it. Empty stubs are bad; **no recipe at all is worse**.
 
-**Decision:** When `/ai-files` runs on a repo, it scaffolds `.ai/skills/<area>/<task>.md` for every canonical file type that has at least one matching file already in the codebase. Skills are populated from the patterns actually in use — never with TODO stubs. The "no empty stubs" rule from ADR-013 remains in force; it's now expressed as "skip skills for absent file types," not "defer all per-file-type skills."
+**Decision:** When `/ai-files` runs on a repo, it scaffolds `.ai/recipes/<area>/<task>.md` for every canonical file type that has at least one matching file already in the codebase. Recipes are populated from the patterns actually in use — never with TODO stubs. The "no empty stubs" rule from ADR-013 remains in force; it's now expressed as "skip recipes for absent file types," not "defer all per-file-type recipes."
 
-Future tickets that add a file of a canonical type that doesn't yet have a skill create that skill as part of the ticket's own scope. The `/ticket` command enforces this: any ticket adding or substantially modifying a file of a canonical type must include the matching skill path in both `## Skills` and `## Scope Paths`.
+Future tickets that add a file of a canonical type that doesn't yet have a recipe create that recipe as part of the ticket's own scope. The `/ticket` command enforces this: any ticket adding or substantially modifying a file of a canonical type must include the matching recipe path in both `## Recipes` and `## Scope Paths`.
 
 The starting set of canonical file types lives in the body of `.claude/commands/ai-files.md`. Backend types: `model`, `route`, `service`, `schema`, `testing`, `seed`, `migrations`. Frontend types: `page`, `component`, `hook`, `lib`, `form`, `types`. The list is extensible per repo when a repo uses shapes not on this list.
 
-**Consequences:** Newly bootstrapped repos get a richer, immediately-useful set of skill files. Each ticket touching a canonical file type now has a documented pattern to follow and a place to record evolution. The empty-stub concern is addressed structurally by the "at least one matching file" gate — no file type, no skill. Existing repos scaffolded under ADR-013 (currently only the Hello Patient take-home) need a one-time retroactive scaffold; see HEL-6 for that work in the take-home repo.
+**Consequences:** Newly bootstrapped repos get a richer, immediately-useful set of recipe files. Each ticket touching a canonical file type now has a documented pattern to follow and a place to record evolution. The empty-stub concern is addressed structurally by the "at least one matching file" gate — no file type, no recipe. Existing repos scaffolded under ADR-013 (currently only the Hello Patient take-home) need a one-time retroactive scaffold; see HEL-6 for that work in the take-home repo.
 
-## ADR-016: Skill names are discovery-driven from the codebase's own vocabulary
+## ADR-016: Recipe names are discovery-driven from the codebase's own vocabulary
 
 **Status:** Accepted — supersedes the "starting set of canonical file types" paragraph in ADR-015
 
 **Context:** ADR-015 enumerated a starting set of canonical file types (backend: model, route, service, schema, testing, seed, migrations; frontend: page, component, hook, lib, form, types) in the body of `/ai-files`. The list is shaped by web-app conventions and only loosely fits other domains: a game repo has sprites and scenes, a data pipeline has DAGs and transforms, infra has modules and stacks. Worse, the list invited two kinds of drift even inside web apps. First, the executor on HEL-6 picked `endpoint.md` over `router.md` because it was reasoning from what the file *contains* (endpoints) rather than what the file *is* (a router file in `routers/`). Second, the executor picked `api-client.md` over `lib.md` for a single-purpose file in `frontend/lib/` — which was the right call, but wasn't authorized by the rigid list. The rule needed to teach the executor when to follow the directory and when to follow the role, without reinventing the list per repo.
 
-**Decision:** Skill files are named after **what the file IS** in the codebase's own structural vocabulary, applied in this order:
+**Decision:** Recipe files are named after **what the file IS** in the codebase's own structural vocabulary, applied in this order:
 
-1. **Directory name first.** A pluralized directory becomes the singular skill name (`routers/` → `router.md`, `services/` → `service.md`, `sprites/` → `sprite.md`, `dags/` → `dag.md`).
+1. **Directory name first.** A pluralized directory becomes the singular recipe name (`routers/` → `router.md`, `services/` → `service.md`, `sprites/` → `sprite.md`, `dags/` → `dag.md`).
 2. **Single-purpose file inside a generic directory** takes the file's role, not the directory (`frontend/lib/chatApi.ts` alone in `lib/` → `api-client.md`, not `lib.md`).
 3. **Framework terminology when no directory signals it** (SQLAlchemy "models" → `model.md`, Phaser "scenes" → `scene.md`).
 4. **Reject renaming based on contents.** Routers contain endpoints; the file is still a router. Models contain fields; the file is still a model.
 
-`/ai-files` no longer enumerates a fixed canonical set. It describes the rule, then provides worked example sets for four common repo shapes (web app, game, data pipeline, infra) as illustrations of how the rule produces a real skill list. The actual skill set for any given repo comes from applying the rule against what is on disk.
+`/ai-files` no longer enumerates a fixed canonical set. It describes the rule, then provides worked example sets for four common repo shapes (web app, game, data pipeline, infra) as illustrations of how the rule produces a real recipe list. The actual recipe set for any given repo comes from applying the rule against what is on disk.
 
 Two enforcement points support the rule:
 
-- **`/run` Step 4** — before writing any file whose type matches an existing skill, the executor reads `.ai/skills/<area>/<task>.md` and conforms. If the ticket adds the first file of a previously-unseen recurring type, the executor creates the skill inline, named per the rule.
-- **`factory create-issue`** — emits a soft warning (stderr, never blocks) when a ticket's `## Scope Paths` touch an `<area>/` directory that already has a per-file-type skill, but the skill's path is not listed in scope. Implemented in `factory.ticket.find_scope_skill_mismatches`. Detection-only: any false positives are ignored at human review.
+- **`/run` Step 4** — before writing any file whose type matches an existing recipe, the executor reads `.ai/recipes/<area>/<task>.md` and conforms. If the ticket adds the first file of a previously-unseen recurring type, the executor creates the recipe inline, named per the rule.
+- **`factory create-issue`** — emits a soft warning (stderr, never blocks) when a ticket's `## Scope Paths` touch an `<area>/` directory that already has a per-file-type recipe, but the recipe's path is not listed in scope. Implemented in `factory.ticket.find_scope_recipe_mismatches`. Detection-only: any false positives are ignored at human review.
 
-**Consequences:** Skill scaffolding works for non-web repos without per-domain code changes. The HEL-6 `endpoint.md` mistake is structurally ruled out — the rule now authorizes the executor's good naming instinct (`api-client.md`) and rejects its bad one (`endpoint.md`). The soft warning catches scope/skill mismatches at ticket-creation time rather than waiting for an executor or reviewer to notice. The rigid type list in ADR-015 is no longer load-bearing — `/ticket` and ADR-015 are updated to refer to "recurring file-type patterns" + the naming rule rather than enumerating types.
+**Consequences:** Recipe scaffolding works for non-web repos without per-domain code changes. The HEL-6 `endpoint.md` mistake is structurally ruled out — the rule now authorizes the executor's good naming instinct (`api-client.md`) and rejects its bad one (`endpoint.md`). The soft warning catches scope/recipe mismatches at ticket-creation time rather than waiting for an executor or reviewer to notice. The rigid type list in ADR-015 is no longer load-bearing — `/ticket` and ADR-015 are updated to refer to "recurring file-type patterns" + the naming rule rather than enumerating types.
 
 ## ADR-017: OpenCode + ollama as a third local executor tier
 
@@ -302,25 +302,25 @@ Two splittings were considered and rejected. **Multiple Linear tickets per featu
 
 What survived: **decomposition at ideation, sequential execution under one PR.** All the hard reasoning happens once during `/ideate` and `/ticket`. Subtask bodies carry the design (exact column names, function signatures, branching algorithms in pseudocode, layout grids, copy strings). Each subtask is one file. The runner executes each subtask as its own agent call but tests only once at the end of the whole ticket. One PR per ticket, one diff to review, but the agent never juggles more than one file's worth of design at a time.
 
-**Decision:** Tickets carry a `## Subtasks` section, parsed by `src/factory/ticket.py` into a `Subtask` dataclass (`id`, `title`, `files`, `changes`, `skill`, `depends_on`). Each subtask is markdown of the form:
+**Decision:** Tickets carry a `## Subtasks` section, parsed by `src/factory/ticket.py` into a `Subtask` dataclass (`id`, `title`, `files`, `changes`, `recipe`, `depends_on`). Each subtask is markdown of the form:
 
 ```
 ### N. <imperative title>
 - Files: <one or two paths>
-- Skill: <.ai/skills/...>
+- Recipe: <.ai/recipes/...>
 - Depends on: <(none) | comma-separated ids>
 
 <changes paragraph or code block, detailed enough that a small local
 model can execute mechanically>
 ```
 
-When `ticket.subtasks` is non-empty, `_run_subtask_loop` in `src/factory/runner.py` executes them sequentially. Each subtask gets its own agent invocation with a prompt containing: (a) project rules, (b) the overall ticket AC as context, (c) this subtask's spec, (d) the referenced skill content loaded inline, (e) lists of completed and remaining subtasks, (f) the current `git diff HEAD` so the agent sees prior subtasks' work. The prompt explicitly instructs the agent to touch only listed files, not commit, not run tests, and stop. Failure (non-zero exit, timeout, usage-limit) stops the loop, preserves the branch, and propagates to the existing failure handlers. After all subtasks complete, the existing install/tests/secret-scan/commit/PR flow runs once.
+When `ticket.subtasks` is non-empty, `_run_subtask_loop` in `src/factory/runner.py` executes them sequentially. Each subtask gets its own agent invocation with a prompt containing: (a) project rules, (b) the overall ticket AC as context, (c) this subtask's spec, (d) the referenced recipe content loaded inline, (e) lists of completed and remaining subtasks, (f) the current `git diff HEAD` so the agent sees prior subtasks' work. The prompt explicitly instructs the agent to touch only listed files, not commit, not run tests, and stop. Failure (non-zero exit, timeout, usage-limit) stops the loop, preserves the branch, and propagates to the existing failure handlers. After all subtasks complete, the existing install/tests/secret-scan/commit/PR flow runs once.
 
-The `/ticket` and `/ideate` skill prompts encode the decomposition discipline. Subtasks reference skills, not files — no exemplar field, because exemplar pointers drift and erode skill quality. Missing skill → prepend a skill-creation subtask before the consuming one; the skill catalog grows organically as features are decomposed. Per-file is the granularity floor; per-function loses too much semantic context. **If executing a subtask would require the agent to make a design decision, the decomposition is not done** — push the decision into the subtask body until execution is mechanical.
+The `/ticket` and `/ideate` command prompts encode the decomposition discipline. Subtasks reference recipes, not files — no exemplar field, because exemplar pointers drift and erode recipe quality. Missing recipe → prepend a recipe-creation subtask before the consuming one; the recipe catalog grows organically as features are decomposed. Per-file is the granularity floor; per-function loses too much semantic context. **If executing a subtask would require the agent to make a design decision, the decomposition is not done** — push the decision into the subtask body until execution is mechanical.
 
 Tickets without `## Subtasks` continue to run on the existing single-shot path. Backward compatible.
 
-**Consequences:** All three executor tiers (claude, codex, opencode) get smaller per-call contexts and produce more focused diffs. The local tier (ADR-017) becomes viable for real feature work because the reasoning is upstream. Ideation becomes more substantive work — subtask bodies are longer and require reading the relevant skill files during the conversation, not just naming them. Failure recovery is fail-fast: a broken subtask aborts the ticket; no cross-subtask revision in v1. The factory's atomic-PR guarantee is preserved — one ticket, one branch, one PR — but the agent-side execution is no longer monolithic. The `tier_hint` field exists on the `Subtask` dataclass for future use but is not exercised by the current `/ticket` skill prompt: every subtask defaults to local-first via the standard fallback order.
+**Consequences:** All three executor tiers (claude, codex, opencode) get smaller per-call contexts and produce more focused diffs. The local tier (ADR-017) becomes viable for real feature work because the reasoning is upstream. Ideation becomes more substantive work — subtask bodies are longer and require reading the relevant recipe files during the conversation, not just naming them. Failure recovery is fail-fast: a broken subtask aborts the ticket; no cross-subtask revision in v1. The factory's atomic-PR guarantee is preserved — one ticket, one branch, one PR — but the agent-side execution is no longer monolithic. The `tier_hint` field exists on the `Subtask` dataclass for future use but is not exercised by the current `/ticket` recipe prompt: every subtask defaults to local-first via the standard fallback order.
 
 ---
 
@@ -328,7 +328,7 @@ Tickets without `## Subtasks` continue to run on the existing single-shot path. 
 
 **Status:** Accepted
 
-**Context:** Today the factory runs one ticket per PR per branch. Tickets with a declared `## Depends On` block until the dependency PR merges to main, at which point the dependent ticket can be queued for the next run. For an always-on host processing a backlog of dependent tickets — a feature that spans N PRs by design — this means N round-trips: queue 1, wait for merge, queue 2, wait, etc. The user gatekeeps by promoting tickets in order in Linear; nothing in the factory enforces or accelerates the dependency relationship. `Depends On` has been parsed in the `/ticket` skill format but explicitly noted as "for the factory to enforce it later" in the code comments.
+**Context:** Today the factory runs one ticket per PR per branch. Tickets with a declared `## Depends On` block until the dependency PR merges to main, at which point the dependent ticket can be queued for the next run. For an always-on host processing a backlog of dependent tickets — a feature that spans N PRs by design — this means N round-trips: queue 1, wait for merge, queue 2, wait, etc. The user gatekeeps by promoting tickets in order in Linear; nothing in the factory enforces or accelerates the dependency relationship. `Depends On` has been parsed in the `/ticket` recipe format but explicitly noted as "for the factory to enforce it later" in the code comments.
 
 ADR-018 (subtask decomposition) showed that smaller per-call agent context plus a shared branch produces better results than monolithic single-shot execution. The same shape applies one level up: a chain of dependent tickets is the *ticket-level* equivalent of a sequence of subtasks. Each ticket is still a real, independently-reviewable unit of work — but bundling them on one branch removes the merge-roundtrip friction and gives every executor tier (including the local tier from ADR-017) sustained context across the feature.
 

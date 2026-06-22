@@ -13,7 +13,7 @@ class Subtask:
 
     files: paths (relative to repo root) the subtask is allowed to touch — usually one.
     changes: free-form description of what should change in those files.
-    skill: path to the .ai/skills/<area>/<task>.md file the subtask should follow.
+    recipe: path to the .ai/recipes/<area>/<task>.md file the subtask should follow.
     tier_hint: optional 'local' | 'hosted'; routes to that provider first, falls back normally.
     depends_on: list of subtask ids (e.g. ['1', '2']) that must precede this one in execution.
     """
@@ -22,7 +22,7 @@ class Subtask:
     title: str
     changes: str
     files: list[str] = field(default_factory=list)
-    skill: str | None = None
+    recipe: str | None = None
     tier_hint: str | None = None
     depends_on: list[str] = field(default_factory=list)
 
@@ -39,7 +39,7 @@ class Ticket:
     linear_url: str | None = None
     linear_id: str | None = None  # UUID used for Linear API write-back
     notes: str = ""
-    skills: list[str] = field(default_factory=list)
+    recipes: list[str] = field(default_factory=list)
     subtasks: list[Subtask] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
     raw_body: str = ""
@@ -60,8 +60,8 @@ class Ticket:
         parts = [f"## Acceptance Criteria\n\n{self.acceptance_criteria}"]
         if self.notes:
             parts.append(f"## Notes\n\n{self.notes}")
-        if self.skills:
-            parts.append("## Skills\n\n" + "\n".join(self.skills))
+        if self.recipes:
+            parts.append("## Recipes\n\n" + "\n".join(self.recipes))
         if self.depends_on:
             parts.append("## Depends On\n\n" + "\n".join(self.depends_on))
 
@@ -96,8 +96,8 @@ def parse_ticket(path: Path) -> Ticket:
     if acceptance_criteria is None:
         raise ValueError(f"{path}: missing required '## Acceptance Criteria' section")
 
-    skills_raw = _extract_section(body, "Skills") or ""
-    skills = [line.strip() for line in skills_raw.splitlines() if line.strip()]
+    recipes_raw = _extract_section(body, "Recipes") or ""
+    recipes = [line.strip() for line in recipes_raw.splitlines() if line.strip()]
 
     subtasks = _parse_subtasks(_extract_section(body, "Subtasks") or "")
 
@@ -114,7 +114,7 @@ def parse_ticket(path: Path) -> Ticket:
         linear_url=fm.get("linear_url"),
         linear_id=fm.get("linear_id"),
         notes=_extract_section(body, "Notes") or "",
-        skills=skills,
+        recipes=recipes,
         subtasks=subtasks,
         depends_on=depends_on,
         raw_body=body,
@@ -122,7 +122,7 @@ def parse_ticket(path: Path) -> Ticket:
 
 
 _SUBTASK_HEADER_RE = re.compile(r"^###\s+(?P<id>[^.\s]+)\.\s+(?P<title>.+?)\s*$")
-_SUBTASK_FIELD_RE = re.compile(r"^[-*]\s*(?P<key>Files?|Skill|Tier|Depends on)\s*:\s*(?P<val>.*)$",
+_SUBTASK_FIELD_RE = re.compile(r"^[-*]\s*(?P<key>Files?|Recipe|Tier|Depends on)\s*:\s*(?P<val>.*)$",
                                re.IGNORECASE)
 
 
@@ -156,7 +156,7 @@ def _parse_subtasks(section: str) -> list[Subtask]:
     """Parse the ``## Subtasks`` body.
 
     Each subtask is a ``### N. Title`` block followed by bullet fields
-    (Files, Skill, Tier, Depends on) and a free-form changes paragraph.
+    (Files, Recipe, Tier, Depends on) and a free-form changes paragraph.
     Returns [] if the section is empty.
     """
     if not section.strip():
@@ -177,7 +177,7 @@ def _parse_subtasks(section: str) -> list[Subtask]:
                 title=current["title"],
                 files=current.get("files", []),
                 changes=current["changes"],
-                skill=current.get("skill"),
+                recipe=current.get("recipe"),
                 tier_hint=current.get("tier_hint"),
                 depends_on=current.get("depends_on", []),
             )
@@ -198,8 +198,8 @@ def _parse_subtasks(section: str) -> list[Subtask]:
             val = field_match.group("val").strip()
             if key.startswith("file"):
                 current["files"] = [p.strip() for p in re.split(r"[,\s]+", val) if p.strip()]
-            elif key == "skill":
-                current["skill"] = val or None
+            elif key == "recipe":
+                current["recipe"] = val or None
             elif key == "tier":
                 current["tier_hint"] = val.lower() or None
             elif key.startswith("depends"):
@@ -248,18 +248,18 @@ def _parse_scope_paths(description: str) -> list[str]:
     return paths
 
 
-def find_scope_skill_mismatches(description: str, repo_root: Path) -> list[str]:
-    """Return one warning line per per-file-type skill whose area is touched by
+def find_scope_recipe_mismatches(description: str, repo_root: Path) -> list[str]:
+    """Return one warning line per per-file-type recipe whose area is touched by
     the ticket's scope paths but whose own path is not listed in those scope paths.
 
-    The check is intentionally simple: it walks `.ai/skills/<area>/<task>.md` files
-    that already exist in `repo_root`, treats the first directory under `.ai/skills/`
+    The check is intentionally simple: it walks `.ai/recipes/<area>/<task>.md` files
+    that already exist in `repo_root`, treats the first directory under `.ai/recipes/`
     as the area, and flags a scope path whose first segment equals that area without
-    also listing the skill file itself. Skips `.ai/skills/ai-structure.md` (not a
-    per-file-type skill) and any skill files at the top level of `.ai/skills/`.
+    also listing the recipe file itself. Skips `.ai/recipes/ai-structure.md` (not a
+    per-file-type recipe) and any recipe files at the top level of `.ai/recipes/`.
     """
-    skills_root = repo_root / ".ai" / "skills"
-    if not skills_root.is_dir():
+    recipes_root = repo_root / ".ai" / "recipes"
+    if not recipes_root.is_dir():
         return []
 
     scope_paths = _parse_scope_paths(description)
@@ -270,11 +270,11 @@ def find_scope_skill_mismatches(description: str, repo_root: Path) -> list[str]:
     scope_first_segments = {p.split("/", 1)[0] for p in normalized_scope if p}
 
     warnings: list[str] = []
-    for skill_path in sorted(skills_root.rglob("*.md")):
-        rel = skill_path.relative_to(repo_root)
+    for recipe_path in sorted(recipes_root.rglob("*.md")):
+        rel = recipe_path.relative_to(repo_root)
         parts = rel.parts
-        # Expect .ai/skills/<area>/<task>.md — skip ai-structure.md and any
-        # top-level skill files (no area dimension to check against scope).
+        # Expect .ai/recipes/<area>/<task>.md — skip ai-structure.md and any
+        # top-level recipe files (no area dimension to check against scope).
         if len(parts) < 4:
             continue
         area = parts[2]

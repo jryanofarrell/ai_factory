@@ -17,7 +17,7 @@ Read the full conversation so far. Identify every distinct unit of work discusse
 - **Design decisions** — for each non-obvious choice, state the decision and the alternative that was considered and rejected, and why. This is the durable record of *why* the code looks the way it does. The executor and the human reviewer both read this.
 - **Acceptance Criteria** — bulleted list, each criterion specific and testable. This is what the PR must satisfy.
 - **Scope Paths** — list of glob patterns for files that may be touched (e.g. `apps/api/src/**`, `CHANGELOG.md`). Use your best judgment from the discussion; leave empty if truly unclear.
-- **Subtasks** — per-file decomposition of the work. Each subtask is one file (or a tightly grouped pair like a schema + its migration) with explicit fields (Files, Skill, Tier, Depends on) and a short changes description. **This is the new contract** — the runner executes subtasks sequentially, one agent invocation per subtask. See "Subtask decomposition" below for the rules.
+- **Subtasks** — per-file decomposition of the work. Each subtask is one file (or a tightly grouped pair like a schema + its migration) with explicit fields (Files, Recipe, Tier, Depends on) and a short changes description. **This is the new contract** — the runner executes subtasks sequentially, one agent invocation per subtask. See "Subtask decomposition" below for the rules.
 - **Depends On** (optional) — list of ticket IDs (e.g. `HEL-3`) that must merge before this ticket can start. Per ADR-019, when dependent tickets are both in the queue, the factory groups them into a chain: one shared branch, one PR, one commit per ticket. Cross-repo deps refuse to run. Cycles abort the whole run. Max chain depth 5; past that the chain splits. Empty for the first ticket in a chain.
 - **Notes** (optional) — walkthrough angles, gotchas, executor cautions. Things that don't fit above but the executor or reviewer should see.
 
@@ -28,10 +28,10 @@ Tickets are decomposed into per-file subtasks at ticket-write time. The runner e
 Rules:
 
 1. **Per-file is the floor.** Each subtask touches one file (sometimes a tightly-coupled pair like `schema.ts` + its migration). Going finer (per-function) does not work — the agent needs the file as a unit.
-2. **Each subtask points at a skill, not a file.** Skill is canonical (`.ai/skills/api/service.md`). Do not include exemplar file pointers — they drift and erode skill quality. If the skill doesn't have enough detail for an agent to follow, fix the skill, don't paper over it with a file pointer.
-3. **Missing skill → write the skill first.** If a subtask would need a skill that doesn't exist, prepend a skill-creation subtask (Files: `.ai/skills/<area>/<task>.md`, depends_on: none) before the consuming subtask. The skill catalog grows organically as features are decomposed.
-4. **Every subtask must be executable by a small local model.** Each subtask runs on the local executor by default — write the body assuming the executor cannot reason its way out of ambiguity. The skill provides the pattern; the subtask body specifies what's variable for this case: exact column names, function signatures, branching algorithms in pseudocode, specific copy strings, layout grids. **If executing a subtask would require the agent to make a design decision** — choose between two algorithms, pick a layout, decide a naming convention — **the decomposition is not done.** Push the decision up into the subtask body until the agent's job is mechanical.
-5. **Subtasks must follow their skill, not redefine it.** The skill is the source of truth for the pattern. Don't restate the skill in the subtask body — assume the agent will read it. Use the subtask body only for what the skill cannot know: this feature's specific columns, this function's exact signature, this route's specific handlers, this dedup algorithm's branching. If you find yourself contradicting the skill in a subtask body, fix the skill instead.
+2. **Each subtask points at a recipe, not a file.** Recipe is canonical (`.ai/recipes/api/service.md`). Do not include exemplar file pointers — they drift and erode recipe quality. If the recipe doesn't have enough detail for an agent to follow, fix the recipe, don't paper over it with a file pointer.
+3. **Missing recipe → write the recipe first.** If a subtask would need a recipe that doesn't exist, prepend a recipe-creation subtask (Files: `.ai/recipes/<area>/<task>.md`, Recipe: `.ai/recipes/recipe.md`, depends_on: none) before the consuming subtask. The recipe-creation subtask points at `.ai/recipes/recipe.md` — the meta-recipe describing how to author a recipe — so the executor follows the repo's recipe format. The recipe catalog grows organically as features are decomposed.
+4. **Every subtask must be executable by a small local model.** Each subtask runs on the local executor by default — write the body assuming the executor cannot reason its way out of ambiguity. The recipe provides the pattern; the subtask body specifies what's variable for this case: exact column names, function signatures, branching algorithms in pseudocode, specific copy strings, layout grids. **If executing a subtask would require the agent to make a design decision** — choose between two algorithms, pick a layout, decide a naming convention — **the decomposition is not done.** Push the decision up into the subtask body until the agent's job is mechanical.
+5. **Subtasks must follow their recipe, not redefine it.** The recipe is the source of truth for the pattern. Don't restate the recipe in the subtask body — assume the agent will read it. Use the subtask body only for what the recipe cannot know: this feature's specific columns, this function's exact signature, this route's specific handlers, this dedup algorithm's branching. If you find yourself contradicting the recipe in a subtask body, fix the recipe instead.
 6. **Order matters.** Use `Depends on:` to declare ordering. The runner executes subtasks in document order but the explicit `Depends on:` is what humans and the runner both use to reason about correctness.
 7. **Tests run once, at the end.** Subtasks intentionally leave the codebase in a partially-broken state. Do not write subtasks whose AC includes "tests pass" — that's the ticket-level AC.
 8. **Don't decompose past meaningful work.** A subtask should accomplish something a reasonable engineer would call a unit of work. "Add the import statement" is not a subtask.
@@ -41,13 +41,13 @@ Subtask markdown format (each block is one subtask):
 ```
 ### 1. <short imperative title>
 - Files: apps/api/src/myVendor/schema.ts
-- Skill: .ai/skills/api/schema.md
+- Recipe: .ai/recipes/api/schema.md
 - Depends on: (none)
 
 <changes paragraph or code block: exactly what changes in those files.
-Reference the skill for the pattern, but state the specifics here —
+Reference the recipe for the pattern, but state the specifics here —
 column names, function signatures, branching algorithms in pseudocode,
-exact JSX layout — that the agent can't derive from the skill alone.
+exact JSX layout — that the agent can't derive from the recipe alone.
 Aim for a body the local model can execute mechanically. If you'd be
 making the decision while reading it, the agent will too.>
 ```
@@ -55,7 +55,7 @@ making the decision while reading it, the agent will too.>
 Fields in detail:
 
 - **Files** — comma-separated relative paths. Usually one. The subtask agent is told it may only touch these files.
-- **Skill** — path to the skill the subtask follows. Required.
+- **Recipe** — path to the recipe the subtask follows. Required.
 - **Depends on** — comma-separated subtask ids (e.g. `1, 2`) or `(none)`.
 
 If the discussion concluded that the ticket is small enough to be done in one shot (e.g. a typo fix in a single file), it is OK to omit Subtasks — the runner falls back to the legacy single-shot execution path. But for any ticket that touches more than one file or has more than a few ACs, write subtasks.
@@ -66,21 +66,21 @@ If the discussion covered one cohesive piece of work, produce one ticket. If it 
 
 **The detail level matters.** `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria` are not optional — every ticket needs them. A ticket that reads as "do X" without explaining why X looks the way it does forces the executor to relitigate every choice and gives the human reviewer nothing to defend in a walkthrough. Be substantive — the goal is a self-contained planning doc, not a checklist.
 
-### Step 2 — Select relevant skills
+### Step 2 — Select relevant recipes
 
-For each ticket, scan the target repo's `.ai/skills/` directory to find skills relevant to the work:
+For each ticket, scan the target repo's `.ai/recipes/` directory to find recipes relevant to the work:
 
 ```bash
-find repos/<target_repo>/.ai/skills -name "*.md" | sort
+find repos/<target_repo>/.ai/recipes -name "*.md" | sort
 ```
 
-Read the `name` and `description` frontmatter from each skill file. Based on the ticket's scope_paths and acceptance_criteria, select the skill files the executor will need. Include their paths (relative to the repo root) as a `## Skills` section in the ticket description.
+Read the `name` and `description` frontmatter from each recipe file. Based on the ticket's scope_paths and acceptance_criteria, select the recipe files the executor will need. Include their paths (relative to the repo root) as a `## Recipes` section in the ticket description.
 
-Example: a ticket touching `apps/api/src/routers/**` that adds a new router would select `api/router.md`, `api/schema.md`, `api/service.md`, `api/permissioning.md`, and `api/testing.md`. (Skill names follow the codebase's own vocabulary — `routers/` becomes `router.md`, not `endpoint.md`. See the naming rule in `/ai-files`.)
+Example: a ticket touching `apps/api/src/routers/**` that adds a new router would select `api/router.md`, `api/schema.md`, `api/service.md`, `api/permissioning.md`, and `api/testing.md`. (Recipe names follow the codebase's own vocabulary — `routers/` becomes `router.md`, not `endpoint.md`. See the naming rule in `/ai-files`.)
 
-**Per-file-type skill rule.** When a ticket adds or substantially modifies a file that matches a recurring file-type pattern in the repo — anything for which `.ai/skills/<area>/<task>.md` already exists, or which the naming rule in `/ai-files` says should have one — the matching skill path must appear in **both** `## Skills` (so the executor reads it before writing) **and** `## Scope Paths` (so the executor can update the skill if the pattern evolves). If no skill exists yet for that type, the ticket creates it as part of its own scope, named per the rule. Either way: every new file of a recurring type ties to its skill file.
+**Per-file-type recipe rule.** When a ticket adds or substantially modifies a file that matches a recurring file-type pattern in the repo — anything for which `.ai/recipes/<area>/<task>.md` already exists, or which the naming rule in `/ai-files` says should have one — the matching recipe path must appear in **both** `## Recipes` (so the executor reads it before writing) **and** `## Scope Paths` (so the executor can update the recipe if the pattern evolves). If no recipe exists yet for that type, the ticket creates it as part of its own scope, named per the rule. Either way: every new file of a recurring type ties to its recipe file.
 
-If no skills directory exists for the target repo, skip this step.
+If no recipes directory exists for the target repo, skip this step.
 
 ### Step 3 — Display for review
 
@@ -93,7 +93,7 @@ Title:       <title>
 Repo:        <target_repo>
 Scope:       <scope paths, one per line or comma-separated>
 Depends On:  <ticket IDs or "(none)">
-Skills:      <skill paths or "(none)">
+Recipes:      <recipe paths or "(none)">
 ════════════════════════════════════════════════════════════════════
 
 ## Context
@@ -158,7 +158,7 @@ Created N ticket(s). Open them in Linear, review, and mark "Ready For AI" when y
 - **If target_repo is ambiguous**, ask before drafting. Don't guess.
 - **Always include `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria`.** They are not optional. If those sections would be thin because the conversation didn't establish enough, gather more context (run `/ideate` or ask the user directly) before drafting — do not pad with generic prose.
 - **Declare dependencies explicitly.** If ticket B requires ticket A's changes to land first, B's `Depends On` must list A's ID. Sequential implementation does not imply dependency — only declare it when the work cannot start without the prior ticket merged.
-- **Tie new files of recurring types to their skill.** Any ticket that adds or substantially modifies a file matching a recurring file-type pattern in the repo must include the matching `.ai/skills/<area>/<task>.md` in both `## Skills` and `## Scope Paths`. The skill is named per the rule in `/ai-files` (directory-driven, codebase vocabulary). If no such skill exists yet, the ticket creates it. See ADR-015 and ADR-016.
+- **Tie new files of recurring types to their recipe.** Any ticket that adds or substantially modifies a file matching a recurring file-type pattern in the repo must include the matching `.ai/recipes/<area>/<task>.md` in both `## Recipes` and `## Scope Paths`. The recipe is named per the rule in `/ai-files` (directory-driven, codebase vocabulary). If no such recipe exists yet, the ticket creates it. See ADR-015 and ADR-016.
 
 ## Description format
 
@@ -191,7 +191,7 @@ The description passed to `create-issue` is structured Markdown. Some sections a
 
 ### 1. <short imperative>
 - Files: <path>
-- Skill: <.ai/skills/...>
+- Recipe: <.ai/recipes/...>
 - Depends on: <(none)|ids>
 
 <changes — concrete enough that a small local model can execute mechanically>
@@ -204,10 +204,10 @@ The description passed to `create-issue` is structured Markdown. Some sections a
 <ticket-id>
 <ticket-id>
 
-## Skills
+## Recipes
 
-.ai/skills/api/route.md
-.ai/skills/api/schema.md
+.ai/recipes/api/route.md
+.ai/recipes/api/schema.md
 
 ## Notes
 
@@ -218,8 +218,8 @@ The description passed to `create-issue` is structured Markdown. Some sections a
 <repo_key>
 ```
 
-**Parsed by the factory** (per ADR-010 + the `Depends On` convention added here): `Acceptance Criteria` (required), `Scope Paths`, `Subtasks`, `Depends On`, `Skills`, `Notes`, `Target Repo`, `Budget`.
+**Parsed by the factory** (per ADR-010 + the `Depends On` convention added here): `Acceptance Criteria` (required), `Scope Paths`, `Subtasks`, `Depends On`, `Recipes`, `Notes`, `Target Repo`, `Budget`.
 
 **Executor-facing context, not parsed**: `Context`, `Plan`, `Design decisions`.
 
-Always include `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria`. Include `Scope Paths` when known (usually). Include `Depends On` when a dependency exists. Include `Skills` only if the target repo has a `.ai/skills/` directory and relevant skills were identified in Step 2. Include `Notes` when there's additional context worth surfacing. Include `Budget` only if the user explicitly asked for soft sizing notes.
+Always include `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria`. Include `Scope Paths` when known (usually). Include `Depends On` when a dependency exists. Include `Recipes` only if the target repo has a `.ai/recipes/` directory and relevant recipes were identified in Step 2. Include `Notes` when there's additional context worth surfacing. Include `Budget` only if the user explicitly asked for soft sizing notes.
