@@ -25,6 +25,7 @@ Every target repo should have:
                           loaded on demand by the relevant task
     recipes/
       ai-structure.md    ← map of the .ai/ system itself
+      recipe.md          ← the meta-recipe: how to author a recipe (always created)
       <area>/<task>.md   ← procedural how-to guides; one per canonical file type
                           present in the codebase, populated from real code
 ```
@@ -150,6 +151,8 @@ For each missing file, draft content by reading actual code in the target repo.
 - **.ai/context/<area>.md** — describe what currently exists in that area. Format: short tables or bulleted lists covering major files, models, routes, components, key conventions, gotchas. Written so a fresh agent session can pick up cold.
 
 - **.ai/recipes/ai-structure.md** — a map of the `.ai/` layout (similar in spirit to the section above), tailored to what was actually created — including the file-type recipes present.
+
+- **.ai/recipes/recipe.md** — the meta-recipe: how to author a recipe in this repo (frontmatter, the pattern-not-instance rule, no exemplar pointers, mechanical-for-small-models). Always created, regardless of detected file types — recipe-creation subtasks point at it so new recipes follow a consistent format. The content is the same authoring standard described in this command and the `/ticket` recipe rules.
 
 - **.ai/recipes/<area>/<task>.md** (per file type detected in Step 4) — procedural how-to guide for writing/modifying files of that type, **drawn from the patterns actually in use in the codebase**. Each recipe should answer:
   - Where these files live (path conventions).
