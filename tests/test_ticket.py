@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from factory.ticket import find_scope_skill_mismatches, parse_ticket
+from factory.ticket import find_scope_recipe_mismatches, parse_ticket
 
 VALID_TICKET = """\
 ---
@@ -103,54 +103,54 @@ def test_notes_optional(tmp_path: Path) -> None:
     assert t.notes == ""
 
 
-def _scaffold_skills(repo_root: Path, *skills: str) -> None:
-    for rel in skills:
+def _scaffold_recipes(repo_root: Path, *recipes: str) -> None:
+    for rel in recipes:
         p = repo_root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("# skill\n")
+        p.write_text("# recipe\n")
 
 
-def test_scope_skill_mismatch_warns_when_skill_missing_from_scope(tmp_path: Path) -> None:
-    _scaffold_skills(tmp_path, ".ai/skills/backend/router.md")
+def test_scope_recipe_mismatch_warns_when_recipe_missing_from_scope(tmp_path: Path) -> None:
+    _scaffold_recipes(tmp_path, ".ai/recipes/backend/router.md")
     desc = "## Acceptance Criteria\n\n- Thing.\n\n## Scope Paths\n\nbackend/routers/threads.py\n"
-    warnings = find_scope_skill_mismatches(desc, tmp_path)
+    warnings = find_scope_recipe_mismatches(desc, tmp_path)
     assert warnings == [
-        "scope touches backend/ but .ai/skills/backend/router.md is not in Scope Paths"
+        "scope touches backend/ but .ai/recipes/backend/router.md is not in Scope Paths"
     ]
 
 
-def test_scope_skill_mismatch_silent_when_skill_listed(tmp_path: Path) -> None:
-    _scaffold_skills(tmp_path, ".ai/skills/backend/router.md")
+def test_scope_recipe_mismatch_silent_when_recipe_listed(tmp_path: Path) -> None:
+    _scaffold_recipes(tmp_path, ".ai/recipes/backend/router.md")
     desc = (
         "## Acceptance Criteria\n\n- Thing.\n\n"
-        "## Scope Paths\n\nbackend/routers/threads.py\n.ai/skills/backend/router.md\n"
+        "## Scope Paths\n\nbackend/routers/threads.py\n.ai/recipes/backend/router.md\n"
     )
-    assert find_scope_skill_mismatches(desc, tmp_path) == []
+    assert find_scope_recipe_mismatches(desc, tmp_path) == []
 
 
-def test_scope_skill_mismatch_silent_when_area_not_touched(tmp_path: Path) -> None:
-    _scaffold_skills(tmp_path, ".ai/skills/backend/router.md")
+def test_scope_recipe_mismatch_silent_when_area_not_touched(tmp_path: Path) -> None:
+    _scaffold_recipes(tmp_path, ".ai/recipes/backend/router.md")
     desc = "## Acceptance Criteria\n\n- Thing.\n\n## Scope Paths\n\nfrontend/components/Foo.tsx\n"
-    assert find_scope_skill_mismatches(desc, tmp_path) == []
+    assert find_scope_recipe_mismatches(desc, tmp_path) == []
 
 
-def test_scope_skill_mismatch_ignores_ai_structure_and_top_level(tmp_path: Path) -> None:
-    _scaffold_skills(
+def test_scope_recipe_mismatch_ignores_ai_structure_and_top_level(tmp_path: Path) -> None:
+    _scaffold_recipes(
         tmp_path,
-        ".ai/skills/ai-structure.md",
-        ".ai/skills/orphan.md",
-        ".ai/skills/backend/router.md",
+        ".ai/recipes/ai-structure.md",
+        ".ai/recipes/orphan.md",
+        ".ai/recipes/backend/router.md",
     )
     desc = "## Acceptance Criteria\n\n- Thing.\n\n## Scope Paths\n\nbackend/routers/threads.py\n"
-    warnings = find_scope_skill_mismatches(desc, tmp_path)
+    warnings = find_scope_recipe_mismatches(desc, tmp_path)
     assert warnings == [
-        "scope touches backend/ but .ai/skills/backend/router.md is not in Scope Paths"
+        "scope touches backend/ but .ai/recipes/backend/router.md is not in Scope Paths"
     ]
 
 
-def test_scope_skill_mismatch_no_skills_dir(tmp_path: Path) -> None:
+def test_scope_recipe_mismatch_no_recipes_dir(tmp_path: Path) -> None:
     desc = "## Acceptance Criteria\n\n- Thing.\n\n## Scope Paths\n\nbackend/routers/threads.py\n"
-    assert find_scope_skill_mismatches(desc, tmp_path) == []
+    assert find_scope_recipe_mismatches(desc, tmp_path) == []
 
 
 SUBTASK_TICKET = """\
@@ -168,7 +168,7 @@ target_repo: thms-platform
 
 ### 1. Add my_vendors Drizzle schema
 - Files: apps/api/src/myVendor/schema.ts
-- Skill: .ai/skills/api/schema.md
+- Recipe: .ai/recipes/api/schema.md
 - Tier: local
 - Depends on: (none)
 
@@ -177,7 +177,7 @@ email, name, notes.
 
 ### 2. Add myVendor Manager
 - Files: apps/api/src/myVendor/Manager.ts
-- Skill: .ai/skills/api/manager.md
+- Recipe: .ai/recipes/api/manager.md
 - Tier: local
 - Depends on: 1
 
@@ -185,7 +185,7 @@ Standard CRUD manager: findById, findByUser, create, update, delete.
 
 ### 3. Add myVendor routes
 - Files: apps/api/src/myVendor/route.ts, apps/api/src/myVendor/__tests__/route.test.ts
-- Skill: .ai/skills/api/route.md
+- Recipe: .ai/recipes/api/route.md
 - Tier: hosted
 - Depends on: 1, 2
 
@@ -201,7 +201,7 @@ def test_subtasks_parsed(tmp_path: Path) -> None:
     assert s1.id == "1"
     assert s1.title == "Add my_vendors Drizzle schema"
     assert s1.files == ["apps/api/src/myVendor/schema.ts"]
-    assert s1.skill == ".ai/skills/api/schema.md"
+    assert s1.recipe == ".ai/recipes/api/schema.md"
     assert s1.tier_hint == "local"
     assert s1.depends_on == []
     assert "my_vendors" in s1.changes
@@ -306,26 +306,26 @@ just edit x.md.
     assert s.id == "A"
     assert s.title == "Trivial"
     assert s.files == ["x.md"]
-    assert s.skill is None
+    assert s.recipe is None
     assert s.tier_hint is None
     assert s.depends_on == []
     assert "edit x.md" in s.changes
 
 
-def test_scope_skill_mismatch_multiple_areas(tmp_path: Path) -> None:
-    _scaffold_skills(
+def test_scope_recipe_mismatch_multiple_areas(tmp_path: Path) -> None:
+    _scaffold_recipes(
         tmp_path,
-        ".ai/skills/backend/router.md",
-        ".ai/skills/backend/service.md",
-        ".ai/skills/frontend/component.md",
+        ".ai/recipes/backend/router.md",
+        ".ai/recipes/backend/service.md",
+        ".ai/recipes/frontend/component.md",
     )
     desc = (
         "## Acceptance Criteria\n\n- Thing.\n\n"
         "## Scope Paths\n\nbackend/routers/threads.py\nfrontend/components/Foo.tsx\n"
-        ".ai/skills/frontend/component.md\n"
+        ".ai/recipes/frontend/component.md\n"
     )
-    warnings = find_scope_skill_mismatches(desc, tmp_path)
+    warnings = find_scope_recipe_mismatches(desc, tmp_path)
     assert warnings == [
-        "scope touches backend/ but .ai/skills/backend/router.md is not in Scope Paths",
-        "scope touches backend/ but .ai/skills/backend/service.md is not in Scope Paths",
+        "scope touches backend/ but .ai/recipes/backend/router.md is not in Scope Paths",
+        "scope touches backend/ but .ai/recipes/backend/service.md is not in Scope Paths",
     ]

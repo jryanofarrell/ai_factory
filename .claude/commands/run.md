@@ -75,7 +75,7 @@ Before writing any code, read the target repo's `CLAUDE.md` and explore the exis
 - Identify existing models, modules, and naming conventions that the ticket touches
 - Do not create a new module or model if one already exists for the same concept under a different name — extend the existing one
 - If the ticket mentions a domain concept (e.g. "vendor", "service provider"), check whether it already exists under another name (e.g. "contractor") before creating anything new
-- **Before writing any file whose type matches an existing skill**, check `.ai/skills/` for a `<area>/<task>.md` that describes how files of that shape are written in this repo. If one exists, read it first and conform. If the ticket adds the first file of a previously-unseen canonical type (router, model, sprite, dag, etc.) and no matching skill exists, create the skill alongside the file as part of this ticket's work — even if the ticket body didn't anticipate it. The skill should describe the actual pattern you just landed, not a TODO.
+- **Before writing any file whose type matches an existing recipe**, check `.ai/recipes/` for a `<area>/<task>.md` that describes how files of that shape are written in this repo. If one exists, read it first and conform. If the ticket adds the first file of a previously-unseen canonical type (router, model, sprite, dag, etc.) and no matching recipe exists, create the recipe alongside the file as part of this ticket's work — even if the ticket body didn't anticipate it. The recipe should describe the actual pattern you just landed, not a TODO.
 
 Then read the acceptance criteria carefully and make all necessary file changes using your Edit and Write tools, working inside `<local_path>`.
 

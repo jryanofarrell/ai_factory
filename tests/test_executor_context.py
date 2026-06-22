@@ -36,7 +36,7 @@ def test_executor_prompt_uses_on_demand_repo_context(tmp_path: Path) -> None:
     assert "Read `.claude/memory/MEMORY.md` if present" in prompt
     assert "Backend/API work" in prompt
     assert "Frontend/web work" in prompt
-    assert "List the contents of `.ai/skills/`" in prompt
+    assert "List the contents of `.ai/recipes/`" in prompt
 
 
 def test_codex_prompt_is_separated_from_cli_options(tmp_path: Path) -> None:

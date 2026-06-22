@@ -30,7 +30,7 @@ _QUOTA_KEYWORDS = (
 def _load_ai_context(local_path: Path) -> str:
     """Read only hard rules for Codex.
 
-    Broader context and skills are intentionally loaded on demand by the executor
+    Broader context and recipes are intentionally loaded on demand by the executor
     prompt so fallback runs do not spend quota on unrelated repo documentation.
     """
     rules_dir = local_path / ".ai" / "rules"

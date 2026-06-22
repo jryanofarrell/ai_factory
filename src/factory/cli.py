@@ -26,7 +26,7 @@ def record_result(
     branch: str | None = typer.Option(None, "--branch"),
     manifest: Path | None = typer.Option(None, "--manifest"),
 ) -> None:
-    """Write Linear write-back and memory after a skill-driven ticket run."""
+    """Write Linear write-back and memory after a recipe-driven ticket run."""
     import os
 
     from dotenv import load_dotenv
@@ -114,9 +114,9 @@ def create_issue(
         typer.echo(f"Error: no Backlog/Todo state found for team {team_key}", err=True)
         raise typer.Exit(1)
 
-    from .ticket import find_scope_skill_mismatches
+    from .ticket import find_scope_recipe_mismatches
 
-    warnings = find_scope_skill_mismatches(description, repo_config.local_path)
+    warnings = find_scope_recipe_mismatches(description, repo_config.local_path)
     for w in warnings:
         typer.echo(f"warning: {w}", err=True)
 

@@ -23,7 +23,7 @@ Every target repo should have:
     context/
       <area>.md          ← codebase snapshot per major area (backend, frontend, db, …)
                           loaded on demand by the relevant task
-    skills/
+    recipes/
       ai-structure.md    ← map of the .ai/ system itself
       <area>/<task>.md   ← procedural how-to guides; one per canonical file type
                           present in the codebase, populated from real code
@@ -31,16 +31,16 @@ Every target repo should have:
 
 ### Canonical file types
 
-For each `<area>` discovered in Step 3, scan the codebase for the recurring file-type patterns that area actually contains, and scaffold one `.ai/skills/<area>/<task>.md` per detected pattern. The list of patterns is **discovery-driven** — derive it from what the repo has, not from a fixed taxonomy.
+For each `<area>` discovered in Step 3, scan the codebase for the recurring file-type patterns that area actually contains, and scaffold one `.ai/recipes/<area>/<task>.md` per detected pattern. The list of patterns is **discovery-driven** — derive it from what the repo has, not from a fixed taxonomy.
 
 #### Naming rule
 
-Skills are named after **what the file IS** in the codebase's own structural vocabulary, not what the file contains.
+Recipes are named after **what the file IS** in the codebase's own structural vocabulary, not what the file contains.
 
-1. **Take the directory name first.** A pluralized directory becomes the singular skill name. `routers/` → `router.md`, `services/` → `service.md`, `models/` → `model.md`, `components/` → `component.md`, `sprites/` → `sprite.md`, `dags/` → `dag.md`.
-2. **For a single-purpose file inside a generic directory**, name the skill after the file's role, not the directory. `frontend/lib/chatApi.ts` as the only file in `lib/` → `api-client.md`, not `lib.md` (which would be too generic).
+1. **Take the directory name first.** A pluralized directory becomes the singular recipe name. `routers/` → `router.md`, `services/` → `service.md`, `models/` → `model.md`, `components/` → `component.md`, `sprites/` → `sprite.md`, `dags/` → `dag.md`.
+2. **For a single-purpose file inside a generic directory**, name the recipe after the file's role, not the directory. `frontend/lib/chatApi.ts` as the only file in `lib/` → `api-client.md`, not `lib.md` (which would be too generic).
 3. **Match the framework's own terminology when no directory signals it.** Drizzle calls them "tables" — use `table.md`. SQLAlchemy calls them "models" — use `model.md`. Phaser scenes — `scene.md`. The codebase's own word wins.
-4. **Reject the urge to rename based on contents.** Routers contain endpoints; the file is still a router (`router.md`, not `endpoint.md`). Models contain fields; the file is still a model. The skill describes the unit the developer thinks in.
+4. **Reject the urge to rename based on contents.** Routers contain endpoints; the file is still a router (`router.md`, not `endpoint.md`). Models contain fields; the file is still a model. The recipe describes the unit the developer thinks in.
 
 Apply in that order. The first rule that fires wins.
 
@@ -61,7 +61,7 @@ Each example shows the pattern set a `/ai-files` run would scaffold for that kin
 **Infra (Terraform / Pulumi):**
 - `module.md` (`modules/`), `stack.md` (`stacks/` or `environments/`), `policy.md` (OPA/Rego, `policies/`), `variable.md` (root variables files), `testing.md` (`tests/`, `terratest/`).
 
-These four are not exhaustive. A CLI tool, a library, a mobile app each have their own vocabulary — scaffold per the rule and the codebase's words. Skip any type that has zero matching files: empty stubs are worse than no skill.
+These four are not exhaustive. A CLI tool, a library, a mobile app each have their own vocabulary — scaffold per the rule and the codebase's words. Skip any type that has zero matching files: empty stubs are worse than no recipe.
 
 Not created at scaffold time:
 - `.claude/commands/` — added per repo only when a slash command is justified
@@ -83,7 +83,7 @@ Check which canonical files exist:
 
 ```bash
 ls CLAUDE.md AGENTS.md 2>/dev/null
-ls .ai/rules/core.md .ai/skills/ai-structure.md 2>/dev/null
+ls .ai/rules/core.md .ai/recipes/ai-structure.md 2>/dev/null
 ls .ai/context/*.md 2>/dev/null
 ```
 
@@ -101,7 +101,7 @@ Take cues from the repo's existing README and framework files. List the proposed
 
 ### Step 4 — Detect file types per area
 
-For each area, glob the codebase for the canonical file types listed earlier. Print a per-area table of which types are present (so the user can see what skill files will be created) and which are absent (so they know what's deliberately being skipped).
+For each area, glob the codebase for the canonical file types listed earlier. Print a per-area table of which types are present (so the user can see what recipe files will be created) and which are absent (so they know what's deliberately being skipped).
 
 Example output for the take-home starter:
 
@@ -124,7 +124,7 @@ frontend/
   ✗ types       (no types/)
 ```
 
-Names follow the rule above — `routers/` → `router`, single-purpose file in `lib/` → `api-client` (not `lib`). Only present file types get skills. Absent ones get skipped — they earn a skill the first time a ticket adds a matching file (see the `/ticket` rule on per-file-type skill updates).
+Names follow the rule above — `routers/` → `router`, single-purpose file in `lib/` → `api-client` (not `lib`). Only present file types get recipes. Absent ones get skipped — they earn a recipe the first time a ticket adds a matching file (see the `/ticket` rule on per-file-type recipe updates).
 
 ### Step 5 — Draft content for missing files
 
@@ -135,7 +135,7 @@ For each missing file, draft content by reading actual code in the target repo.
   - Key build/run commands as observed in the repo (`make`, `npm`, `uv`, `docker compose`, etc.)
   - Pointer to `.ai/rules/core.md` ("read before writing any code")
   - Per-area context links: "Backend work: read `.ai/context/<area>.md`"
-  - Pointer to `.ai/skills/ai-structure.md`
+  - Pointer to `.ai/recipes/ai-structure.md`
 
 - **AGENTS.md** — body mirrors CLAUDE.md verbatim. Same pointers, same prose.
 
@@ -149,15 +149,15 @@ For each missing file, draft content by reading actual code in the target repo.
 
 - **.ai/context/<area>.md** — describe what currently exists in that area. Format: short tables or bulleted lists covering major files, models, routes, components, key conventions, gotchas. Written so a fresh agent session can pick up cold.
 
-- **.ai/skills/ai-structure.md** — a map of the `.ai/` layout (similar in spirit to the section above), tailored to what was actually created — including the file-type skills present.
+- **.ai/recipes/ai-structure.md** — a map of the `.ai/` layout (similar in spirit to the section above), tailored to what was actually created — including the file-type recipes present.
 
-- **.ai/skills/<area>/<task>.md** (per file type detected in Step 4) — procedural how-to guide for writing/modifying files of that type, **drawn from the patterns actually in use in the codebase**. Each skill should answer:
+- **.ai/recipes/<area>/<task>.md** (per file type detected in Step 4) — procedural how-to guide for writing/modifying files of that type, **drawn from the patterns actually in use in the codebase**. Each recipe should answer:
   - Where these files live (path conventions).
   - What shape they take (imports, base classes, decorators, structural rules).
   - What conventions are non-obvious (naming, fields that must always be present, ordering rules).
   - One worked reference to a file in the repo so the reader can see the pattern in context.
 
-  Example shape for `.ai/skills/api/model.md` against this take-home:
+  Example shape for `.ai/recipes/api/model.md` against this take-home:
 
   ```markdown
   ---
@@ -182,7 +182,7 @@ For each missing file, draft content by reading actual code in the target repo.
   - `Message` (line ~32) — adds FK, CHECK constraint, composite index.
   ```
 
-  Repeat the pattern for every detected file type. Each one is short (30-80 lines). Total scaffold for a typical repo: 5-12 small skill files. Empty skills are worse than no skill — if you cannot describe a real pattern, skip the file.
+  Repeat the pattern for every detected file type. Each one is short (30-80 lines). Total scaffold for a typical repo: 5-12 small recipe files. Empty recipes are worse than no recipe — if you cannot describe a real pattern, skip the file.
 
 **Never write `# TODO` placeholders.** If a section would be empty, omit the section. If a file would be empty, do not create it.
 
@@ -217,12 +217,12 @@ git commit -m "Add canonical AI file layout"
 
 Print the final tree and remind the user:
 
-> Keep `.ai/context/<area>.md` and `.ai/skills/<area>/<task>.md` files updated per-ticket. Each ticket that materially changes an area should update the area's context file. Each ticket that adds or changes a file of a canonical type should follow the type's skill — or update the skill if the pattern is new (see the `/ticket` skill's per-file-type rule).
+> Keep `.ai/context/<area>.md` and `.ai/recipes/<area>/<task>.md` files updated per-ticket. Each ticket that materially changes an area should update the area's context file. Each ticket that adds or changes a file of a canonical type should follow the type's recipe — or update the recipe if the pattern is new (see the `/ticket` recipe's per-file-type rule).
 
 ## Rules
 
-- **Never write TODO stubs.** Populate from real code or omit. This applies to per-file-type skills too: if a type has only one trivial file and no pattern worth describing, skip the skill — don't write a stub that just says "add models here."
+- **Never write TODO stubs.** Populate from real code or omit. This applies to per-file-type recipes too: if a type has only one trivial file and no pattern worth describing, skip the recipe — don't write a stub that just says "add models here."
 - **Never overwrite a non-stale file without confirmation.** If a canonical file exists, propose a diff for review.
 - **One commit per scaffold run** — keep the diff atomic.
 - **Refuse to operate on a dirty working tree.** Resulting commit would mix concerns.
-- **Scaffold a per-file-type skill only when at least one matching file exists.** No empty stubs. New types earn their skill the first time a ticket adds a matching file.
+- **Scaffold a per-file-type recipe only when at least one matching file exists.** No empty stubs. New types earn their recipe the first time a ticket adds a matching file.

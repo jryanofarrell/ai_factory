@@ -518,11 +518,11 @@ def _build_subtask_prompt(
     """Build a focused prompt for one subtask within a ticket.
 
     Includes: project rules, overall ticket title + AC (for context), this subtask's
-    spec, the referenced skill content (loaded from disk), the list of already-completed
+    spec, the referenced recipe content (loaded from disk), the list of already-completed
     subtasks, and the current git diff so the agent sees prior work.
     """
     rules = _load_repo_rules(repo_path)
-    skill_text = _load_skill(repo_path, subtask.skill) if subtask.skill else ""
+    recipe_text = _load_recipe(repo_path, subtask.recipe) if subtask.recipe else ""
     diff_so_far = _current_diff(repo_path)
     remaining = [s for s in ticket.subtasks if s not in completed and s is not subtask]
 
@@ -554,19 +554,19 @@ def _build_subtask_prompt(
         subtask.changes or "(see overall ticket; subtask body left empty)",
     ]
 
-    if skill_text:
+    if recipe_text:
         parts += [
             "",
-            f"## Skill to follow: {subtask.skill}",
+            f"## Recipe to follow: {subtask.recipe}",
             "",
-            skill_text,
+            recipe_text,
         ]
-    elif subtask.skill:
+    elif subtask.recipe:
         parts += [
             "",
-            f"## Skill reference: {subtask.skill}",
+            f"## Recipe reference: {subtask.recipe}",
             "",
-            f"(Skill file not found at {subtask.skill}. "
+            f"(Recipe file not found at {subtask.recipe}. "
             "Proceed using only the subtask spec above.)",
         ]
 
@@ -594,7 +594,7 @@ def _build_subtask_prompt(
         "",
         "## Rules for this subtask",
         "",
-        "1. Read the listed files (if they exist) and the skill above.",
+        "1. Read the listed files (if they exist) and the recipe above.",
         "2. Make ONLY the changes for this subtask. Do not touch other files.",
         "3. Do NOT run tests. Do NOT run `git commit` or `git push`.",
         "4. The codebase may be in a partially-broken state — that's expected. "
@@ -605,9 +605,9 @@ def _build_subtask_prompt(
     return "\n".join(parts)
 
 
-def _load_skill(repo_path: Path, skill_rel: str) -> str:
-    """Read a skill markdown file. Returns empty string if missing."""
-    p = repo_path / skill_rel
+def _load_recipe(repo_path: Path, recipe_rel: str) -> str:
+    """Read a recipe markdown file. Returns empty string if missing."""
+    p = repo_path / recipe_rel
     try:
         return p.read_text().strip()
     except (OSError, FileNotFoundError):
@@ -829,20 +829,20 @@ def _load_repo_rules(repo_path: Path) -> str:
     return "\n\n".join(sections)
 
 
-def _skill_loading_instructions(ticket: Ticket) -> list[str]:
+def _recipe_loading_instructions(ticket: Ticket) -> list[str]:
     """Return step 4 of the pre-code checklist.
 
-    Always instructs the executor to discover skills. If the ticket named skills,
+    Always instructs the executor to discover recipes. If the ticket named recipes,
     lists them as a starting hint so the executor doesn't have to guess from scratch.
     """
     lines = [
-        "4. List the contents of `.ai/skills/` to see what guidance is available,",
-        "   then read every skill file relevant to this task. They encode repo-specific",
+        "4. List the contents of `.ai/recipes/` to see what guidance is available,",
+        "   then read every recipe file relevant to this task. They encode repo-specific",
         "   conventions that override general patterns you may already know.",
     ]
-    if ticket.skills:
+    if ticket.recipes:
         lines += ["   Pre-selected as likely relevant — read these first:"]
-        for s in ticket.skills:
+        for s in ticket.recipes:
             lines.append(f"   - `{s}`")
     return lines
 
@@ -893,7 +893,7 @@ def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
         "   - Backend/API work → read `.ai/context/api.md` if present.",
         "   - Frontend/web work → read `.ai/context/web.md` if present.",
         "   - Full-stack work → read both.",
-        *_skill_loading_instructions(ticket),
+        *_recipe_loading_instructions(ticket),
         "5. Then implement the changes.",
         "",
         "## Implementation",
