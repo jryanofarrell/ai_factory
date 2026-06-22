@@ -358,3 +358,29 @@ This reverses the prior assumption that team/repo creation is out of scope: the 
 
 **Consequences:** A new project goes from nothing to factory-ready in one command instead of three manual steps, with no chance of mis-keying the team↔repo↔manifest mapping. The factory's authentication surface now includes repo and team creation: the `gh` token needs `repo` scope (already present), and the Linear key must belong to a workspace whose plan permits programmatic team creation — the Free tier caps team count, in which case team creation fails and the user makes the team in the UI, after which the command picks it up idempotently. The `manifest.yaml` text-insertion is intentionally simple (insert under the first `repos:` line); it assumes the conventional manifest shape and is covered by a unit test. The Architecture "Boundaries" entry that delegated team/repo existence entirely to Linear/GitHub is superseded for the *creation* path; the *mapping* still lives in Linear's native integration once both sides exist. Visibility is a deliberate per-project decision rather than a default-public convenience, because target repos routinely carry integration details for the systems they automate.
 
+---
+
+## ADR-021: Command vs native skill vs recipe — explicit selection over auto-invocation
+
+**Status:** Accepted
+
+**Context:** The word "skill" had accumulated three incompatible meanings in and around the factory, which made the system hard to explain and reason about:
+
+1. **Slash commands** in `.claude/commands/` that the user types (`/ticket`, `/run`, `/ideate`, `/ai-files`, `/new-project`). The Claude Code picker now labels every slash-invocable entry `Skill: /x (project)`, so commands *display* as "skills" even though they are user-triggered and never auto-invoked.
+2. **Native skills** — `.claude/skills/<name>/SKILL.md`, auto-invocable by the harness via description match (progressive disclosure). This is now a cross-tool standard: both Claude Code and Codex read `SKILL.md` (Codex deprecated its custom prompts in favor of skills).
+3. The factory's own **per-file-type pattern docs**, originally `.ai/skills/<area>/<task>.md`, which nothing auto-invokes — the control plane reads them by path and injects them. These were renamed `.ai/skills/` → `.ai/recipes/` (the prior ADRs were reworded in place as if "recipe" had always been the term).
+
+**Decision:** Treat the three as distinct concepts with distinct names:
+- **Command** — an explicit, user-typed slash workflow. Consequential factory operations stay commands *because* they must be triggered deliberately (auto-firing `/ticket` or `/run` would be dangerous).
+- **Native skill** (`SKILL.md`) — an auto-invocable capability. The factory uses **none** of these in its execution path.
+- **Recipe** (`.ai/recipes/<area>/<task>.md`) — a procedural, per-file-type how-to that the control plane explicitly selects per subtask and injects into the executor prompt. Provider-agnostic. The meta-recipe `.ai/recipes/recipe.md` defines how to author one.
+
+The factory deliberately **selects context explicitly rather than relying on auto-invocation**, because it is an unattended, multi-provider pipeline:
+1. Auto-invocation is non-deterministic and unauditable — measured right-skill activation tops out around ~79% even with explicit instructions, and agents exhibit no need-aware invocation (they reach for skills at similar rates whether or not one is required).
+2. The local executor tier (Ollama via OpenCode, see ADR-017) has **no** skill mechanism at all, so path-referenced recipes are the only form portable across Claude / Codex / local.
+3. The decision of *which* pattern applies belongs at planning time (`/ticket`, smart tier), not execution time (any tier, see ADR-018).
+
+For automatic guardrails (branch checks, manifest validation), prefer **deterministic hooks** (`PreToolUse`/`Stop`, which the model cannot bypass) over auto-invoked skills.
+
+**Consequences:** The factory is, in current terms, a **deterministic context-engineering control plane** — context is engineered and injected, not discovered at the model's discretion. Recipes remain the harness-neutral source of truth under `.ai/`; native skills stay available as an interactive convenience but are not part of the execution path. Because the ecosystem has converged on `SKILL.md` + `AGENTS.md` as shared formats, recipes could later double as `SKILL.md` files (one artifact, two access paths) if a single-harness interactive use ever warrants it — but that does not change the execution path, which stays explicit. The recipe concept goes by different names across the industry — Cursor "rules", Copilot "instructions", Anthropic/Codex "skills", Ramp / playbooks.com "playbooks"; the factory's one principled divergence is forbidding exemplar-file pointers in recipes (they drift) in favor of encoding the pattern itself (see ADR-013 / ADR-015 / ADR-018).
+
