@@ -7,7 +7,7 @@ from typing import Any
 
 from .linear import LinearClient, LinearError
 from .manifest import Manifest, load_manifest
-from .ticket import Ticket, _extract_section
+from .ticket import Ticket, _extract_section, _parse_depends_on, _parse_subtasks
 
 
 @dataclass
@@ -157,6 +157,17 @@ def _issue_to_ticket(issue: dict[str, Any], manifest: Manifest, default_repo: st
 
     notes = _extract_section(description, "Notes") or ""
 
+    # Recipes / Subtasks / Depends On drive recipe injection, the subtask
+    # loop (ADR-018), and chain grouping (ADR-019). Parse them exactly like
+    # the file-based path in ticket.parse_ticket — dropping them here made
+    # Linear-pulled tickets run single-shot, recipe-less, and unordered.
+    recipes_raw = _extract_section(description, "Recipes") or ""
+    recipes = [line.strip() for line in recipes_raw.splitlines() if line.strip()]
+
+    subtasks = _parse_subtasks(_extract_section(description, "Subtasks") or "")
+
+    depends_on = _parse_depends_on(_extract_section(description, "Depends On") or "")
+
     return Ticket(
         id=issue["identifier"],
         title=issue["title"],
@@ -168,6 +179,10 @@ def _issue_to_ticket(issue: dict[str, Any], manifest: Manifest, default_repo: st
         linear_url=issue["url"],
         linear_id=issue.get("id"),
         notes=notes,
+        recipes=recipes,
+        subtasks=subtasks,
+        depends_on=depends_on,
+        raw_body=description,
     )
 
 

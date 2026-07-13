@@ -144,3 +144,50 @@ def test_pull_tickets_can_return_ready_tickets_without_writing_files(
     assert [ticket.id for ticket in result.tickets] == ["THM-5"]
     assert result.written == ["THM-5"]
     assert not (tmp_path / ".factory" / "queue" / "thm-5.md").exists()
+
+
+def test_recipes_subtasks_depends_on_survive_linear_pull():
+    """Regression: Recipes / Subtasks / Depends On must round-trip from a
+    Linear description, or pulled tickets run single-shot, recipe-less, and
+    unchained (the BIL-4..9 incident, 2026-07-13)."""
+    issue = dict(FIXTURE_ISSUE)
+    issue["description"] = (
+        "## Acceptance Criteria\n\n- works\n\n"
+        "## Subtasks\n\n"
+        "### 1. Create the model\n"
+        "- Files: src/app/models.py\n"
+        "- Recipe: .ai/recipes/core/module.md\n"
+        "- Depends on: (none)\n\n"
+        "Add a `Widget` dataclass with fields `id: int` and `name: str`.\n\n"
+        "### 2. Test the model\n"
+        "- Files: tests/test_models.py\n"
+        "- Recipe: .ai/recipes/core/testing.md\n"
+        "- Depends on: 1\n\n"
+        "Round-trip test for `Widget`.\n\n"
+        "## Depends On\n\n"
+        "THM-4\n\n"
+        "## Recipes\n\n"
+        ".ai/recipes/core/module.md\n"
+        ".ai/recipes/core/testing.md\n"
+    )
+    ticket = _issue_to_ticket(issue, MANIFEST, "thms-platform")
+
+    assert ticket.depends_on == ["THM-4"]
+    assert ticket.recipes == [
+        ".ai/recipes/core/module.md",
+        ".ai/recipes/core/testing.md",
+    ]
+    assert len(ticket.subtasks) == 2
+    assert ticket.subtasks[0].files == ["src/app/models.py"]
+    assert ticket.subtasks[0].recipe == ".ai/recipes/core/module.md"
+    assert ticket.subtasks[0].depends_on == []
+    assert ticket.subtasks[1].depends_on == ["1"]
+    assert "Widget" in ticket.subtasks[0].changes
+    assert ticket.raw_body == issue["description"]
+
+
+def test_depends_on_none_sentinel_from_linear():
+    issue = dict(FIXTURE_ISSUE)
+    issue["description"] = "## Acceptance Criteria\n\n- works\n\n## Depends On\n\n(none)\n"
+    ticket = _issue_to_ticket(issue, MANIFEST, "thms-platform")
+    assert ticket.depends_on == []
