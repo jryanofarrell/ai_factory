@@ -188,3 +188,30 @@ def test_mix_of_chain_independent_skipped_and_cross_repo() -> None:
 
     cross_repo_ids = [t.id for t, _ in result.skipped_cross_repo]
     assert "E" in cross_repo_ids
+
+
+def test_refusal_cascades_to_dependents() -> None:
+    """A ticket behind a refused ticket must be skipped too, not run as an
+    'independent' chain (the BIL-9 incident: BIL-8 was refused for a garbage
+    dep, and BIL-9 — which depended on BIL-8 — ran first, alone)."""
+    a = _t("A", deps=["GHOST-1"])   # unsatisfiable: not in queue, not merged
+    b = _t("B", deps=["A"])
+    c = _t("C", deps=["B"])
+    result = group_into_chains([a, b, c])
+
+    assert result.chains == []
+    skipped_ids = [t.id for t, _ in result.skipped_unsatisfied]
+    assert skipped_ids == ["A", "B", "C"]
+    # The cascade names the refused dep, not the original garbage.
+    b_reasons = dict((t.id, miss) for t, miss in result.skipped_unsatisfied)["B"]
+    assert b_reasons == ["A (refused this run)"]
+
+
+def test_cascade_only_hits_dependents() -> None:
+    """An unrelated ticket alongside a refused chain still runs."""
+    a = _t("A", deps=["GHOST-1"])
+    b = _t("B", deps=["A"])
+    solo = _t("SOLO")
+    result = group_into_chains([a, b, solo])
+    assert [[t.id for t in c] for c in result.chains] == [["SOLO"]]
+    assert {t.id for t, _ in result.skipped_unsatisfied} == {"A", "B"}
