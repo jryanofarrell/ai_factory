@@ -191,3 +191,17 @@ def test_depends_on_none_sentinel_from_linear():
     issue["description"] = "## Acceptance Criteria\n\n- works\n\n## Depends On\n\n(none)\n"
     ticket = _issue_to_ticket(issue, MANIFEST, "thms-platform")
     assert ticket.depends_on == []
+
+
+def test_depends_on_survives_linear_autolinking():
+    """Linear rewrites bare issue IDs into markdown links when saving a
+    description; the parsed dep must be the bare ID, not the link."""
+    issue = dict(FIXTURE_ISSUE)
+    issue["description"] = (
+        "## Acceptance Criteria\n\n- works\n\n"
+        "## Depends On\n\n"
+        "[BIL-6](https://linear.app/jryanofarrell-ai-factory/issue/BIL-6/web-pipeline)\n"
+        "[BIL-7](https://linear.app/jryanofarrell-ai-factory/issue/BIL-7/pdf-pipeline)\n"
+    )
+    ticket = _issue_to_ticket(issue, MANIFEST, "thms-platform")
+    assert ticket.depends_on == ["BIL-6", "BIL-7"]

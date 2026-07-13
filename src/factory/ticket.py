@@ -132,14 +132,18 @@ def _parse_depends_on(section: str) -> list[str]:
     Format is one ticket ID per line (per /ticket skill description spec).
     Tolerant of comma-separated IDs on a single line, leading bullet markers,
     and the literal ``(none)`` / ``none`` sentinels which collapse to an empty list.
-    Returns deduplicated IDs in document order.
+    Linear auto-linkifies bare issue IDs in saved descriptions
+    (``BIL-5`` becomes ``[BIL-5](https://linear.app/...)``) — unwrap those
+    links back to the ID before tokenizing. Returns deduplicated IDs in
+    document order.
     """
     if not section.strip():
         return []
     seen: set[str] = set()
     out: list[str] = []
     for raw in section.splitlines():
-        line = raw.strip().lstrip("-*").strip()
+        line = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", raw)
+        line = line.strip().lstrip("-*").strip()
         if not line:
             continue
         if line.lower() in ("(none)", "none"):
