@@ -112,6 +112,27 @@ def group_into_chains(
 
     # Eligible tickets: not refused for either reason.
     refused = cross_repo_offenders | unsatisfied_offenders
+
+    # Refusals cascade: a ticket whose in-queue dep was refused cannot run
+    # either — its dep will not merge during this run. Without this, the
+    # dependent's edge to the refused ticket silently vanishes and it runs
+    # as an "independent" chain out of order (the BIL-9 incident,
+    # 2026-07-13). Propagate to a fixpoint so an entire tail behind one bad
+    # ticket is skipped, not detached.
+    changed = True
+    while changed:
+        changed = False
+        for t in ticket_list:
+            if t.id in refused:
+                continue
+            blocked = [d for d in t.depends_on if d in refused]
+            if blocked:
+                refused.add(t.id)
+                result.skipped_unsatisfied.append(
+                    (t, [f"{d} (refused this run)" for d in blocked])
+                )
+                changed = True
+
     eligible = [t for t in ticket_list if t.id not in refused]
 
     # Detect cycles before grouping. Only consider intra-queue edges

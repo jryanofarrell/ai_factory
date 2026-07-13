@@ -205,3 +205,69 @@ def test_depends_on_survives_linear_autolinking():
     )
     ticket = _issue_to_ticket(issue, MANIFEST, "thms-platform")
     assert ticket.depends_on == ["BIL-6", "BIL-7"]
+
+
+def _linear_issue(identifier: str, deps: list[str], linkify: bool = True) -> dict:
+    """A Linear-shaped issue whose Depends On is autolinkified the way Linear
+    saves it (inconsistently — some IDs stay bare, which is also real)."""
+    if deps:
+        dep_lines = "\n".join(
+            f"[{d}](https://linear.app/test/issue/{d.lower()}/some-title)" if linkify else d
+            for d in deps
+        )
+        dep_section = f"## Depends On\n\n{dep_lines}\n\n"
+    else:
+        dep_section = ""
+    return {
+        "identifier": identifier,
+        "title": f"{identifier} work",
+        "description": (
+            "## Acceptance Criteria\n\n- works\n\n"
+            "## Subtasks\n\n"
+            "### 1. Do the thing\n"
+            "- Files: src/x.py\n"
+            "- Recipe: .ai/recipes/core/module.md\n"
+            "- Depends on: (none)\n\n"
+            "Change src/x.py.\n\n"
+            f"{dep_section}"
+            "## Recipes\n\n.ai/recipes/core/module.md\n"
+        ),
+        "url": f"https://linear.app/test/issue/{identifier}",
+        "state": {"name": "Ready for Agent"},
+        "team": {"key": "THM"},
+        "labels": {"nodes": []},
+    }
+
+
+def test_full_queue_scenario_groups_into_one_chain():
+    """End-to-end regression for the BIL-4..9 incident: six Linear issues in a
+    diamond (4 <- 5 <- {6,7} <- 8 <- 9), pulled newest-first with autolinkified
+    AND bare deps mixed, must group into ONE topo-ordered chain with subtasks
+    and recipes intact — nothing skipped, nothing running out of order."""
+    from factory.chains import group_into_chains
+
+    issues = [
+        _linear_issue("BIL-9", ["BIL-8"], linkify=False),   # bare, like the real data
+        _linear_issue("BIL-8", ["BIL-6", "BIL-7"]),
+        _linear_issue("BIL-7", ["BIL-5"]),
+        _linear_issue("BIL-6", ["BIL-5"]),
+        _linear_issue("BIL-5", ["BIL-4"], linkify=False),
+        _linear_issue("BIL-4", []),
+    ]
+    tickets = [_issue_to_ticket(i, MANIFEST, "thms-platform") for i in issues]
+    for t in tickets:
+        assert t.subtasks, f"{t.id} lost its subtasks"
+        assert t.recipes, f"{t.id} lost its recipes"
+
+    grouped = group_into_chains(tickets)
+
+    assert grouped.skipped_unsatisfied == []
+    assert grouped.skipped_cross_repo == []
+    assert len(grouped.chains) == 1
+    order = [t.id for t in grouped.chains[0]]
+    assert len(order) == 6
+    pos = {tid: i for i, tid in enumerate(order)}
+    assert pos["BIL-4"] < pos["BIL-5"]
+    assert pos["BIL-5"] < pos["BIL-6"] and pos["BIL-5"] < pos["BIL-7"]
+    assert pos["BIL-6"] < pos["BIL-8"] and pos["BIL-7"] < pos["BIL-8"]
+    assert pos["BIL-8"] < pos["BIL-9"]
