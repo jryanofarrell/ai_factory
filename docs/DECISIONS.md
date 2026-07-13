@@ -384,3 +384,15 @@ For automatic guardrails (branch checks, manifest validation), prefer **determin
 
 **Consequences:** The factory is, in current terms, a **deterministic context-engineering control plane** — context is engineered and injected, not discovered at the model's discretion. Recipes remain the harness-neutral source of truth under `.ai/`; native skills stay available as an interactive convenience but are not part of the execution path. Because the ecosystem has converged on `SKILL.md` + `AGENTS.md` as shared formats, recipes could later double as `SKILL.md` files (one artifact, two access paths) if a single-harness interactive use ever warrants it — but that does not change the execution path, which stays explicit. The recipe concept goes by different names across the industry — Cursor "rules", Copilot "instructions", Anthropic/Codex "skills", Ramp / playbooks.com "playbooks"; the factory's one principled divergence is forbidding exemplar-file pointers in recipes (they drift) in favor of encoding the pattern itself (see ADR-013 / ADR-015 / ADR-018).
 
+
+---
+
+## ADR-022: Max chain depth raised from 5 to 10
+
+**Status:** Accepted (amends ADR-019)
+
+**Context:** ADR-019 capped dependency chains at 5 tickets as a review-fatigue lever, with the note that 6+ chained tickets "probably wants to be one ticket with subtasks." The first real greenfield product (billy-ai's parts-catalog parser) produced a legitimate 6-ticket linear chain — scaffold → output layer → web pipeline → PDF pipeline → GUI → packaging — where each ticket is a genuinely independent, reviewable unit and merging them into fewer mega-tickets would fight ADR-018's per-file subtask sizing. The cap also turned out to guard more than review fatigue: `group_into_chains` splits an over-cap component *arbitrarily* at the boundary, and the split tail chain runs in the same pass but branches from the default branch **before** the head chain's PR merges — so its in-queue dependencies are not on its branch and it fails (or worse, half-works). Splitting is therefore not a safe overflow behavior; the practical rule is "keep the whole queued component within the cap."
+
+**Decision:** Raise `DEFAULT_MAX_CHAIN_DEPTH` from 5 to 10 in `src/factory/chains.py`. `group_into_chains` keeps its `max_depth` parameter, and the arbitrary-split overflow behavior is unchanged (now documented with the stale-base warning in the module docstring and the `/ticket` command doc). The review-fatigue concern is downgraded from a hard mechanical cap to operator judgment: the human still gatekeeps chain size by choosing what to promote to "Ready For AI" together.
+
+**Consequences:** A 6–10 ticket feature can one-shot as a single branch/PR with one commit per ticket. The atomic-failure surface grows with chain length — one mid-chain failure aborts the PR for everything queued — which the operator accepts when promoting a long chain at once. The known split-tail hazard (tail chains cut from a stale base) still exists past 10; a proper fix (defer tail chains to the next run instead of running them against a stale base) is left for a future ADR if a >10 chain ever becomes real.

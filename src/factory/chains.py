@@ -14,9 +14,12 @@ Rules (ADR-019):
   branch and silently dropping the constraint would be wrong.
 - **Cycles abort the whole grouping.** A dependency cycle is a ticket-writing
   bug; surface it, refuse to run.
-- **Max chain depth.** Default 5. Chains past that are split arbitrarily —
-  if you need 6+ chained tickets, the work probably wants to be one ticket
-  with subtasks (ADR-018).
+- **Max chain depth.** Default 10 (ADR-022; was 5 per ADR-019). Chains past
+  that are split arbitrarily — and beware: a split tail chain branches from
+  the default branch in the same run, *before* the head chain's PR merges,
+  so its in-queue deps are not actually on its branch. Keep queues within
+  the cap; if you need more chained tickets, the work probably wants to be
+  one ticket with subtasks (ADR-018).
 - **Deps not in queue and not merged on main are treated as not satisfied.**
   The dependent ticket is skipped with a stderr warning, not chained.
 """
@@ -28,7 +31,7 @@ from dataclasses import dataclass, field
 
 from .ticket import Ticket
 
-DEFAULT_MAX_CHAIN_DEPTH = 5
+DEFAULT_MAX_CHAIN_DEPTH = 10
 
 
 class ChainCycleError(ValueError):

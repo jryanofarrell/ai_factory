@@ -153,14 +153,15 @@ def test_max_depth_splits_long_chain() -> None:
     assert [t.id for t in result.chains[1]] == ["D", "E", "F"]
 
 
-def test_default_max_depth_is_five() -> None:
-    """Sanity: default cap is 5, so a 5-chain stays as one."""
-    tickets = [_t("A")]
-    for prev, curr in zip(["A", "B", "C", "D"], ["B", "C", "D", "E"]):
+def test_default_max_depth_is_ten() -> None:
+    """Sanity: default cap is 10 (ADR-022), so a 10-chain stays as one."""
+    ids = [f"T{i}" for i in range(1, 11)]
+    tickets = [_t(ids[0])]
+    for prev, curr in zip(ids, ids[1:]):
         tickets.append(_t(curr, deps=[prev]))
-    result = group_into_chains(tickets)  # no max_depth → 5
+    result = group_into_chains(tickets)  # no max_depth → 10
     assert len(result.chains) == 1
-    assert len(result.chains[0]) == 5
+    assert len(result.chains[0]) == 10
 
 
 # ---------- Mixed scenarios ----------
