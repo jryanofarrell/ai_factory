@@ -965,9 +965,12 @@ def run_chain(
     commits per ADR-019.
 
     On mid-chain failure (agent error, tests fail, scope abort, quota
-    exhaustion): the chain branch is preserved with the *successful* commits;
-    no PR is opened; all tickets remain in the queue. The caller can re-run
-    once the underlying failure is resolved.
+    exhaustion): the successful prior commits are shipped as a *partial* PR
+    (ADR-023) so completed work is reviewable and mergeable; the failed
+    ticket and everything downstream stay in the queue. Once the partial PR
+    merges (moving its tickets to Done in Linear), the next run resumes the
+    chain from the failure point. If the failure hits the first ticket,
+    there is nothing to ship — the branch is preserved and no PR opens.
     """
     import time as _time
 
@@ -1018,12 +1021,11 @@ def run_chain(
         )
         result.per_ticket.append(rr)
         if not rr.success:
-            typer.echo(
-                f"\nChain aborted at ticket {ticket.id}. Branch '{branch}' preserved "
-                f"with {len(result.per_ticket) - 1} successful commit(s).",
-                err=True,
-            )
             result.error = f"Chain failed at {ticket.id}: {rr.error or rr.reason}"
+            _finish_partial_chain(
+                result=result, chain=chain, failed=ticket,
+                repo=repo, branch=branch, dry_run=dry_run,
+            )
             result.duration_s = _time.monotonic() - start
             _return_to_default(repo.local_path, repo.default_branch)
             return result
@@ -1218,14 +1220,108 @@ def _return_to_default(local_path: Path, default_branch: str) -> None:
     )
 
 
-def _chain_pr_title(chain: list[Ticket]) -> str:
+def _finish_partial_chain(
+    *,
+    result: ChainResult,
+    chain: list[Ticket],
+    failed: Ticket,
+    repo: RepoConfig,
+    branch: str,
+    dry_run: bool,
+) -> None:
+    """Ship the successful commits of a failed chain as a partial PR (ADR-023).
+
+    Instead of stranding completed tickets on an unpushed branch, open a PR
+    containing the commits that succeeded before the failure. The failed
+    ticket and everything downstream stay in the queue; once the partial PR
+    merges (its tickets reach Done in Linear), the next run resumes the
+    chain from the failure point. With zero successful commits there is
+    nothing to ship — the branch is preserved for inspection, as before.
+
+    Must be called while the chain branch is still checked out (the secret
+    scan and any commit rollback operate on the working tree).
+    """
+    succeeded = [t for t, rr in zip(chain, result.per_ticket) if rr.success]
+    n_ok = len(succeeded)
+    if n_ok == 0:
+        typer.echo(
+            f"\nChain failed at its first ticket {failed.id}. "
+            f"Branch '{branch}' preserved; no PR.",
+            err=True,
+        )
+        return
+
+    leaks = secret_scan(repo.local_path)
+    if leaks:
+        # Same treatment as the full-chain scan failure: undo and delete.
+        for _ in range(n_ok):
+            undo_commit(repo.local_path)
+        delete_branch(repo.local_path, branch, repo.default_branch)
+        result.branch = None
+        result.error = (
+            f"{result.error}; secret scan failed on the partial chain — "
+            f"rules fired: {', '.join(leaks)}"
+        )
+        # The commits are gone: downgrade the per-ticket successes so the
+        # caller doesn't write back "PR opened" for work that was rolled back.
+        for rr in result.per_ticket:
+            if rr.success:
+                rr.success = False
+                rr.reason = "rolled back: secret scan failed on the partial chain"
+        return
+
+    if dry_run:
+        typer.echo(
+            f"\nDry-run: chain failed at {failed.id}. Partial branch '{branch}' "
+            f"preserved with {n_ok} successful commit(s). No push or PR.",
+            err=True,
+        )
+        return
+
+    not_attempted = chain[len(result.per_ticket):]
+    push(repo.local_path, branch)
+    pr_url = create_pr(
+        repo.local_path,
+        title=_chain_pr_title(succeeded, failed_id=failed.id),
+        body=_chain_pr_body(succeeded, failed=failed, not_attempted=not_attempted),
+        base=repo.default_branch,
+        head=branch,
+    )
+    result.pr_url = pr_url
+    # Attribute the partial PR only to the tickets it actually contains.
+    for rr in result.per_ticket:
+        if rr.success:
+            rr.pr_url = pr_url
+    typer.echo(
+        f"\nChain failed at {failed.id}. Partial PR opened with the "
+        f"{n_ok} completed ticket(s): {pr_url}",
+        err=True,
+    )
+
+
+def _chain_pr_title(chain: list[Ticket], *, failed_id: str | None = None) -> str:
     first = chain[0].id
     rest = len(chain) - 1
-    return f"{first} + {rest} more: {chain[0].title}" if rest else f"{first}: {chain[0].title}"
+    base = f"{first} + {rest} more: {chain[0].title}" if rest else f"{first}: {chain[0].title}"
+    return f"{base} [partial chain — {failed_id} failed]" if failed_id else base
 
 
-def _chain_pr_body(chain: list[Ticket]) -> str:
-    lines = ["This chain landed multiple dependent tickets on one branch.\n"]
+def _chain_pr_body(
+    chain: list[Ticket],
+    *,
+    failed: Ticket | None = None,
+    not_attempted: list[Ticket] | None = None,
+) -> str:
+    lines = []
+    if failed is not None:
+        still_queued = ", ".join([failed.id] + [t.id for t in (not_attempted or [])])
+        lines.append(
+            f"**Partial chain.** `{failed.id}` ({failed.title}) failed mid-chain; "
+            "this PR contains the tickets that completed before it. "
+            f"Still queued: {still_queued}. Merging this PR lets the next "
+            "`factory run` resume the chain from the failure point.\n"
+        )
+    lines.append("This chain landed multiple dependent tickets on one branch.\n")
     for i, t in enumerate(chain, 1):
         lines.append(f"## Commit {i}: {t.id} — {t.title}\n")
         lines.append("**Acceptance Criteria:**\n")

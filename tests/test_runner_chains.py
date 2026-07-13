@@ -110,8 +110,8 @@ def test_multi_ticket_chain_opens_pr_with_combined_title(tmp_path: Path) -> None
 
 # ---------- Mid-chain failure ----------
 
-def test_chain_aborts_on_agent_failure_with_branch_preserved(tmp_path: Path) -> None:
-    """Ticket 2 fails → no PR, branch kept with ticket 1's commit, T3 not attempted."""
+def test_mid_chain_failure_opens_partial_pr(tmp_path: Path) -> None:
+    """Ticket 2 fails → partial PR with ticket 1's commit; T3 not attempted (ADR-023)."""
     with ExitStack() as stack:
         _enter_patches(stack)
         stack.enter_context(
@@ -124,25 +124,89 @@ def test_chain_aborts_on_agent_failure_with_branch_preserved(tmp_path: Path) -> 
                 ],
             )
         )
-        create_pr_mock = stack.enter_context(patch("factory.runner.create_pr"))
+        create_pr_mock = stack.enter_context(
+            patch("factory.runner.create_pr", return_value="https://github.com/x/pr/7")
+        )
         push_mock = stack.enter_context(patch("factory.runner.push"))
 
         chain = [_t("T1"), _t("T2", deps=["T1"]), _t("T3", deps=["T2"])]
         result = run_chain(chain, _repo(tmp_path))
 
+    assert result.success is False                    # the chain itself still failed
+    assert result.pr_url == "https://github.com/x/pr/7"
+    assert "T2" in (result.error or "")
+    assert len(result.per_ticket) == 2                # T1 + T2, T3 never attempted
+    assert result.per_ticket[0].success is True
+    assert result.per_ticket[0].pr_url == "https://github.com/x/pr/7"
+    assert result.per_ticket[1].success is False
+    assert result.per_ticket[1].pr_url is None        # the failed ticket isn't in the PR
+    push_mock.assert_called_once()
+    # Partial marker in title; body names the failed ticket and the queued tail.
+    pr_title = create_pr_mock.call_args.kwargs["title"]
+    assert "partial" in pr_title.lower() and "T2" in pr_title
+    pr_body = create_pr_mock.call_args.kwargs["body"]
+    assert "T2" in pr_body and "T3" in pr_body
+
+
+def test_first_ticket_failure_opens_no_pr(tmp_path: Path) -> None:
+    """Failure at the first ticket → nothing to ship; branch preserved, no PR."""
+    with ExitStack() as stack:
+        _enter_patches(stack)
+        stack.enter_context(
+            patch(
+                "factory.runner._run_with_fallback",
+                return_value=AgentResult(exit_code=2, provider="claude"),
+            )
+        )
+        create_pr_mock = stack.enter_context(patch("factory.runner.create_pr"))
+        push_mock = stack.enter_context(patch("factory.runner.push"))
+
+        chain = [_t("T1"), _t("T2", deps=["T1"])]
+        result = run_chain(chain, _repo(tmp_path))
+
     assert result.success is False
     assert result.pr_url is None
     assert result.branch is not None  # preserved for inspection
-    assert "T2" in (result.error or "")
-    assert len(result.per_ticket) == 2  # T1 + T2, T3 never attempted
-    assert result.per_ticket[0].success is True
-    assert result.per_ticket[1].success is False
     push_mock.assert_not_called()
     create_pr_mock.assert_not_called()
 
 
+def test_partial_chain_secret_scan_rolls_back_and_downgrades(tmp_path: Path) -> None:
+    """Secret scan fires on a partial chain → commits undone, successes downgraded."""
+    with ExitStack() as stack:
+        _enter_patches(stack)
+        stack.enter_context(
+            patch(
+                "factory.runner._run_with_fallback",
+                side_effect=[
+                    AgentResult(exit_code=0, provider="claude"),
+                    AgentResult(exit_code=2, provider="claude"),
+                ],
+            )
+        )
+        stack.enter_context(
+            patch("factory.runner.secret_scan", return_value=["aws-access-key"])
+        )
+        create_pr_mock = stack.enter_context(patch("factory.runner.create_pr"))
+        undo_mock = stack.enter_context(patch("factory.runner.undo_commit"))
+        delete_branch_mock = stack.enter_context(patch("factory.runner.delete_branch"))
+
+        chain = [_t("T1"), _t("T2", deps=["T1"])]
+        result = run_chain(chain, _repo(tmp_path))
+
+    assert result.success is False
+    assert result.branch is None
+    assert "secret scan" in (result.error or "").lower()
+    undo_mock.assert_called_once()          # only T1's commit existed
+    delete_branch_mock.assert_called_once()
+    create_pr_mock.assert_not_called()
+    # T1's rolled-back success must not be written back as "PR opened".
+    assert result.per_ticket[0].success is False
+    assert "rolled back" in (result.per_ticket[0].reason or "")
+
+
 def test_chain_aborts_on_all_providers_exhausted(tmp_path: Path) -> None:
-    """All providers exhausted mid-chain → chain aborts, branch preserved."""
+    """All providers exhausted mid-chain → partial PR for the completed ticket."""
     with ExitStack() as stack:
         _enter_patches(stack)
         stack.enter_context(
@@ -156,13 +220,18 @@ def test_chain_aborts_on_all_providers_exhausted(tmp_path: Path) -> None:
                 ],
             )
         )
+        create_pr_mock = stack.enter_context(
+            patch("factory.runner.create_pr", return_value="https://github.com/x/pr/8")
+        )
 
         chain = [_t("T1"), _t("T2", deps=["T1"])]
         result = run_chain(chain, _repo(tmp_path))
 
     assert result.success is False
     assert result.per_ticket[0].success is True
+    assert result.per_ticket[0].pr_url == "https://github.com/x/pr/8"
     assert result.per_ticket[1].reason == "all_providers_quota_exhausted"
+    create_pr_mock.assert_called_once()
 
 
 # ---------- Secret scan failure ----------
