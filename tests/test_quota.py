@@ -171,12 +171,19 @@ def test_fallback_all_exhausted_returns_usage_limit_hit(tmp_path: Path) -> None:
     assert result.provider == "exhausted"
 
 
-def test_fallback_skips_tracker_exhausted_provider(tmp_path: Path) -> None:
+def test_fallback_probes_even_with_tracker_record(tmp_path: Path) -> None:
+    """The live probe is consulted despite an existing exhaustion record —
+    the tracker never short-circuits it. (Inverted from the original
+    behavior, where a stale record blocked claude for the full assumed
+    window while the real quota had recovered.)"""
     qt = QuotaTracker(tmp_path / "quota_state.json")
     qt.mark_exhausted("claude")
 
     with (
-        patch("factory.runner.claude_provider.fetch_quota") as mock_probe,
+        patch(
+            "factory.runner.claude_provider.fetch_quota",
+            return_value=_make_quota_info(0.95),
+        ) as mock_probe,
         patch("factory.runner.codex_provider.run", return_value=_ok_agent("codex")),
     ):
         result = _run_with_fallback(
@@ -188,9 +195,8 @@ def test_fallback_skips_tracker_exhausted_provider(tmp_path: Path) -> None:
             quota_tracker=qt,
             max_utilization=0.90,
         )
-    # Probe should not have been called — tracker already knows claude is exhausted
-    mock_probe.assert_not_called()
-    assert result.provider == "codex"
+    mock_probe.assert_called_once()
+    assert result.provider == "codex"  # still skipped — but because the PROBE said 95%
 
 
 def test_fallback_quota_probe_failure_proceeds_anyway(tmp_path: Path) -> None:
@@ -229,3 +235,111 @@ def test_fallback_codex_mid_run_quota_hit_marks_exhausted(tmp_path: Path) -> Non
         )
     assert not qt.is_available("codex")
     assert result.usage_limit_hit is True
+
+
+# ---------------------------------------------------------------------------
+# Live probe is authoritative (stale tracker records must not block claude)
+# ---------------------------------------------------------------------------
+
+
+def test_stale_exhaustion_overridden_by_healthy_probe(tmp_path: Path) -> None:
+    """A recorded exhaustion must not block claude when the live probe shows
+    the window has recovered — and the stale record is cleared."""
+    qt = QuotaTracker(tmp_path / "quota_state.json")
+    qt.mark_exhausted("claude")  # stale: real window is at 25%
+    with (
+        patch("factory.runner.claude_provider.fetch_quota", return_value=_make_quota_info(0.25)),
+        patch("factory.runner.claude_provider.run", return_value=_ok_agent("claude")) as run_mock,
+    ):
+        result = _run_with_fallback(
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
+        )
+    run_mock.assert_called_once()
+    assert result.provider == "claude"
+    assert qt.is_available("claude")  # record cleared
+
+
+def test_probe_over_threshold_records_actual_reset(tmp_path: Path) -> None:
+    """Skipping at >=90% must store the provider-reported reset time, not the
+    assumed 5-hour window."""
+    qt = QuotaTracker(tmp_path / "quota_state.json")
+    info = _make_quota_info(0.95)  # reset_5h = now + 3h
+    with (
+        patch("factory.runner.claude_provider.fetch_quota", return_value=info),
+        patch("factory.runner.codex_provider.run", return_value=_ok_agent("codex")),
+    ):
+        result = _run_with_fallback(
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
+        )
+    assert result.provider == "codex"
+    remaining = qt.seconds_until_reset("claude")
+    assert remaining is not None
+    # ~3h from the header, NOT the 5h default assumption.
+    assert 2.9 * 3600 < remaining <= 3.0 * 3600
+
+
+def test_probe_failure_falls_back_to_tracker_record(tmp_path: Path) -> None:
+    """When the probe fails (no token / network), an active exhaustion record
+    still skips claude."""
+    qt = QuotaTracker(tmp_path / "quota_state.json")
+    qt.mark_exhausted("claude")
+    with (
+        patch("factory.runner.claude_provider.fetch_quota", return_value=None),
+        patch("factory.runner.claude_provider.run") as claude_run,
+        patch("factory.runner.codex_provider.run", return_value=_ok_agent("codex")),
+    ):
+        result = _run_with_fallback(
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
+        )
+    claude_run.assert_not_called()
+    assert result.provider == "codex"
+
+
+def test_probe_failure_without_record_proceeds(tmp_path: Path) -> None:
+    qt = QuotaTracker(tmp_path / "quota_state.json")
+    with (
+        patch("factory.runner.claude_provider.fetch_quota", return_value=None),
+        patch("factory.runner.claude_provider.run", return_value=_ok_agent("claude")) as run_mock,
+    ):
+        result = _run_with_fallback(
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
+        )
+    run_mock.assert_called_once()
+    assert result.provider == "claude"
+
+
+def test_mid_run_claude_quota_hit_stores_probed_reset(tmp_path: Path) -> None:
+    """A usage-limit hit during a claude run probes for the true reset time."""
+    qt = QuotaTracker(tmp_path / "quota_state.json")
+    healthy_then_hit = [_make_quota_info(0.50), _make_quota_info(1.0)]
+    with (
+        patch("factory.runner.claude_provider.fetch_quota", side_effect=healthy_then_hit),
+        patch("factory.runner.claude_provider.run", return_value=_quota_hit_agent("claude")),
+        patch("factory.runner.codex_provider.run", return_value=_ok_agent("codex")),
+    ):
+        result = _run_with_fallback(
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
+        )
+    assert result.provider == "codex"
+    remaining = qt.seconds_until_reset("claude")
+    assert remaining is not None and 2.9 * 3600 < remaining <= 3.0 * 3600
+
+
+def test_quota_tracker_clear_removes_record(tmp_path: Path) -> None:
+    qt = QuotaTracker(tmp_path / "quota_state.json")
+    qt.mark_exhausted("claude")
+    assert not qt.is_available("claude")
+    qt.clear("claude")
+    assert qt.is_available("claude")
+    qt.clear("claude")  # idempotent on missing record
+
+
+def test_quota_tracker_reset_at_expired_means_available(tmp_path: Path) -> None:
+    qt = QuotaTracker(tmp_path / "quota_state.json")
+    qt.mark_exhausted("claude", reset_at=datetime.now(UTC) - timedelta(minutes=1))
+    assert qt.is_available("claude")

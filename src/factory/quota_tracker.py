@@ -22,10 +22,24 @@ class QuotaTracker:
         self._path = state_file
         self._reset_hours = {**_DEFAULT_RESET_HOURS, **(reset_hours or {})}
 
-    def mark_exhausted(self, provider: str) -> None:
+    def mark_exhausted(self, provider: str, reset_at: datetime | None = None) -> None:
+        """Record exhaustion. When the provider's API reported the actual reset
+        time (claude's ``anthropic-ratelimit-unified-5h-reset`` header), store
+        it — otherwise callers fall back to the assumed window length."""
         state = self._load()
-        state[provider] = {"exhausted_at": datetime.now(UTC).isoformat()}
+        record: dict = {"exhausted_at": datetime.now(UTC).isoformat()}
+        if reset_at is not None:
+            record["reset_at"] = reset_at.isoformat()
+        state[provider] = record
         self._save(state)
+
+    def clear(self, provider: str) -> None:
+        """Remove a provider's exhaustion record (e.g. a live probe showed the
+        window has recovered)."""
+        state = self._load()
+        if provider in state:
+            del state[provider]
+            self._save(state)
 
     def is_available(self, provider: str) -> bool:
         """Return True if the provider has no recorded exhaustion or the window has passed."""
@@ -38,6 +52,16 @@ class QuotaTracker:
         record = state.get(provider)
         if not record:
             return None
+        # Prefer the provider-reported reset time when it was recorded.
+        reset_at_raw = record.get("reset_at")
+        if reset_at_raw:
+            try:
+                reset_at = datetime.fromisoformat(reset_at_raw)
+            except ValueError:
+                reset_at = None
+            if reset_at is not None:
+                remaining = (reset_at - datetime.now(UTC)).total_seconds()
+                return remaining if remaining > 0 else None
         try:
             exhausted_at = datetime.fromisoformat(record["exhausted_at"])
         except (KeyError, ValueError):

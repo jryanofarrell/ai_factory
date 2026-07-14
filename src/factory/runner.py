@@ -355,13 +355,11 @@ def _run_with_fallback(
     provider if utilization >= max_utilization (default 0.90 = 90%).
     """
     for name in providers:
-        if quota_tracker and not quota_tracker.is_available(name):
-            reset_msg = quota_tracker.format_reset_time(name)
-            typer.echo(f"  [{name}] quota exhausted — {reset_msg}, skipping.", err=True)
-            continue
-
-        # Pre-flight quota check (claude only — live header probe)
         if name == "claude":
+            # The live header probe is authoritative for claude — a stale
+            # tracker record must never block a provider whose real 5h window
+            # has recovered. The tracker only decides when the probe itself
+            # fails (no keychain token, network error).
             quota = claude_provider.fetch_quota()
             if quota is not None:
                 pct = round(quota.utilization_5h * 100, 1)
@@ -373,10 +371,24 @@ def _run_with_fallback(
                         err=True,
                     )
                     if quota_tracker:
-                        quota_tracker.mark_exhausted("claude")
+                        quota_tracker.mark_exhausted("claude", reset_at=quota.reset_5h)
                     continue
+                if quota_tracker:
+                    quota_tracker.clear("claude")
+            elif quota_tracker and not quota_tracker.is_available("claude"):
+                reset_msg = quota_tracker.format_reset_time("claude")
+                typer.echo(
+                    f"  [claude] quota probe failed; last known exhaustion — {reset_msg}, "
+                    "skipping.",
+                    err=True,
+                )
+                continue
             else:
                 typer.echo("  [claude] quota probe failed — proceeding without check.")
+        elif quota_tracker and not quota_tracker.is_available(name):
+            reset_msg = quota_tracker.format_reset_time(name)
+            typer.echo(f"  [{name}] quota exhausted — {reset_msg}, skipping.", err=True)
+            continue
 
         typer.echo(f"  Using executor: {name}")
         if name == "claude":
@@ -393,7 +405,15 @@ def _run_with_fallback(
 
         if agent.usage_limit_hit:
             if quota_tracker:
-                quota_tracker.mark_exhausted(name)
+                reset_at = None
+                if name == "claude":
+                    # fetch_quota reads rate-limit headers even off a 429
+                    # error response, so the true reset time is usually
+                    # available at the moment of exhaustion.
+                    q = claude_provider.fetch_quota()
+                    if q is not None:
+                        reset_at = q.reset_5h
+                quota_tracker.mark_exhausted(name, reset_at=reset_at)
                 reset_msg = quota_tracker.format_reset_time(name)
                 typer.echo(
                     f"  [{name}] quota hit — marked exhausted ({reset_msg}). Trying next provider.",
