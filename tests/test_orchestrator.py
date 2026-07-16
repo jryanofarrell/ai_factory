@@ -161,7 +161,9 @@ def test_unmerged_external_dep_refuses_to_run(tmp_path: Path, capsys) -> None:
         patch("factory.orchestrator.LinearClient", return_value=fake),
         patch(
             "factory.orchestrator.run_chain",
-            return_value=ChainResult(chain_id="HEL-2", branch=None, pr_url=None, success=False),
+            return_value=ChainResult(
+                chain_id="HEL-2", branch=None, pr_url=None, success=False
+            ),
         ) as run_chain_mock,
     ):
         run(manifest_path=manifest_path, no_cleanup=True, dry_run=False, api_key="test")

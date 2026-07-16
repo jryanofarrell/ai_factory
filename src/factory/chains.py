@@ -88,7 +88,10 @@ def group_into_chains(
     # queue but belongs to a different repo is refused (ADR-019).
     cross_repo_offenders: set[str] = set()
     for t in ticket_list:
-        bad_deps = [d for d in t.depends_on if d in by_id and by_id[d].target_repo != t.target_repo]
+        bad_deps = [
+            d for d in t.depends_on
+            if d in by_id and by_id[d].target_repo != t.target_repo
+        ]
         if bad_deps:
             cross_repo_offenders.add(t.id)
             result.skipped_cross_repo.append((t, bad_deps))
@@ -99,7 +102,10 @@ def group_into_chains(
     for t in ticket_list:
         if t.id in cross_repo_offenders:
             continue
-        missing = [d for d in t.depends_on if d not in queue_ids and d not in merged_ticket_ids]
+        missing = [
+            d for d in t.depends_on
+            if d not in queue_ids and d not in merged_ticket_ids
+        ]
         if missing:
             unsatisfied_offenders.add(t.id)
             result.skipped_unsatisfied.append((t, missing))
@@ -122,7 +128,9 @@ def group_into_chains(
             blocked = [d for d in t.depends_on if d in refused]
             if blocked:
                 refused.add(t.id)
-                result.skipped_unsatisfied.append((t, [f"{d} (refused this run)" for d in blocked]))
+                result.skipped_unsatisfied.append(
+                    (t, [f"{d} (refused this run)" for d in blocked])
+                )
                 changed = True
 
     eligible = [t for t in ticket_list if t.id not in refused]
@@ -139,7 +147,7 @@ def group_into_chains(
         # Enforce max_depth by splitting the chain at the cap. Tail tickets
         # become independent chains (single-ticket "chains") preserving order.
         for i in range(0, len(ordered), max_depth):
-            result.chains.append(ordered[i : i + max_depth])
+            result.chains.append(ordered[i:i + max_depth])
 
     return result
 

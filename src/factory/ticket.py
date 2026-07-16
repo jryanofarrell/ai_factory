@@ -122,9 +122,8 @@ def parse_ticket(path: Path) -> Ticket:
 
 
 _SUBTASK_HEADER_RE = re.compile(r"^###\s+(?P<id>[^.\s]+)\.\s+(?P<title>.+?)\s*$")
-_SUBTASK_FIELD_RE = re.compile(
-    r"^[-*]\s*(?P<key>Files?|Recipe|Tier|Depends on)\s*:\s*(?P<val>.*)$", re.IGNORECASE
-)
+_SUBTASK_FIELD_RE = re.compile(r"^[-*]\s*(?P<key>Files?|Recipe|Tier|Depends on)\s*:\s*(?P<val>.*)$",
+                               re.IGNORECASE)
 
 
 def _parse_depends_on(section: str) -> list[str]:

@@ -252,13 +252,8 @@ def test_stale_exhaustion_overridden_by_healthy_probe(tmp_path: Path) -> None:
         patch("factory.runner.claude_provider.run", return_value=_ok_agent("claude")) as run_mock,
     ):
         result = _run_with_fallback(
-            local_path=tmp_path,
-            prompt="test",
-            capture_cost=False,
-            budget_minutes=None,
-            providers=["claude", "codex"],
-            quota_tracker=qt,
-            max_utilization=0.90,
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
         )
     run_mock.assert_called_once()
     assert result.provider == "claude"
@@ -275,13 +270,8 @@ def test_probe_over_threshold_records_actual_reset(tmp_path: Path) -> None:
         patch("factory.runner.codex_provider.run", return_value=_ok_agent("codex")),
     ):
         result = _run_with_fallback(
-            local_path=tmp_path,
-            prompt="test",
-            capture_cost=False,
-            budget_minutes=None,
-            providers=["claude", "codex"],
-            quota_tracker=qt,
-            max_utilization=0.90,
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
         )
     assert result.provider == "codex"
     remaining = qt.seconds_until_reset("claude")
@@ -301,13 +291,8 @@ def test_probe_failure_falls_back_to_tracker_record(tmp_path: Path) -> None:
         patch("factory.runner.codex_provider.run", return_value=_ok_agent("codex")),
     ):
         result = _run_with_fallback(
-            local_path=tmp_path,
-            prompt="test",
-            capture_cost=False,
-            budget_minutes=None,
-            providers=["claude", "codex"],
-            quota_tracker=qt,
-            max_utilization=0.90,
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
         )
     claude_run.assert_not_called()
     assert result.provider == "codex"
@@ -320,13 +305,8 @@ def test_probe_failure_without_record_proceeds(tmp_path: Path) -> None:
         patch("factory.runner.claude_provider.run", return_value=_ok_agent("claude")) as run_mock,
     ):
         result = _run_with_fallback(
-            local_path=tmp_path,
-            prompt="test",
-            capture_cost=False,
-            budget_minutes=None,
-            providers=["claude", "codex"],
-            quota_tracker=qt,
-            max_utilization=0.90,
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
         )
     run_mock.assert_called_once()
     assert result.provider == "claude"
@@ -342,13 +322,8 @@ def test_mid_run_claude_quota_hit_stores_probed_reset(tmp_path: Path) -> None:
         patch("factory.runner.codex_provider.run", return_value=_ok_agent("codex")),
     ):
         result = _run_with_fallback(
-            local_path=tmp_path,
-            prompt="test",
-            capture_cost=False,
-            budget_minutes=None,
-            providers=["claude", "codex"],
-            quota_tracker=qt,
-            max_utilization=0.90,
+            local_path=tmp_path, prompt="test", capture_cost=False, budget_minutes=None,
+            providers=["claude", "codex"], quota_tracker=qt, max_utilization=0.90,
         )
     assert result.provider == "codex"
     remaining = qt.seconds_until_reset("claude")

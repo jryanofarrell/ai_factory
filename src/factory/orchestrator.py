@@ -130,7 +130,9 @@ def run(
         else:
             t = ticket_or_none
         if t.target_repo not in manifest.repos:
-            typer.echo(f"SKIP {t.id}: target_repo '{t.target_repo}' not in manifest", err=True)
+            typer.echo(
+                f"SKIP {t.id}: target_repo '{t.target_repo}' not in manifest", err=True
+            )
             continue
         parsed.append((t, ticket_file))
 
@@ -207,7 +209,9 @@ def run(
 
         typer.echo(f"\n{'─' * 60}")
         if len(chain) == 1:
-            typer.echo(f"{'[DRY-RUN] ' if dry_run else ''}Running {chain[0].id}: {chain[0].title}")
+            typer.echo(
+                f"{'[DRY-RUN] ' if dry_run else ''}Running {chain[0].id}: {chain[0].title}"
+            )
         else:
             chain_label = " → ".join(t.id for t in chain)
             typer.echo(f"{'[DRY-RUN] ' if dry_run else ''}Running chain {chain_label}")
@@ -288,7 +292,9 @@ def run(
     _print_summary(results, batch_file, dry_run)
 
 
-def _record_batch_entry(batch: dict, ticket: Ticket, result: RunResult, dry_run: bool) -> None:
+def _record_batch_entry(
+    batch: dict, ticket: Ticket, result: RunResult, dry_run: bool
+) -> None:
     record: dict = {
         "status": "dry_run" if dry_run else ("succeeded" if result.success else "failed")
     }

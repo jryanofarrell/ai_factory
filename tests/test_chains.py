@@ -23,7 +23,6 @@ def _t(tid: str, repo: str = "thms-platform", deps: list[str] | None = None) -> 
 
 # ---------- Happy paths ----------
 
-
 def test_single_independent_ticket() -> None:
     result = group_into_chains([_t("A")])
     assert result.chains == [[_t("A")]]
@@ -72,7 +71,6 @@ def test_diamond_chain_one_pr() -> None:
 
 # ---------- Merged-on-main deps ----------
 
-
 def test_dep_on_main_treated_as_satisfied() -> None:
     """B depends on A which is already merged. B runs alone as its own chain."""
     b = _t("B", deps=["A"])
@@ -104,7 +102,6 @@ def test_partial_satisfaction_skips_dependent_only() -> None:
 
 # ---------- Cross-repo refusal ----------
 
-
 def test_cross_repo_dep_refuses_to_run() -> None:
     """A in repo X, B in repo Y depending on A. B is refused (cross-repo)."""
     a = _t("A", repo="repo-x")
@@ -121,7 +118,6 @@ def test_cross_repo_dep_refuses_to_run() -> None:
 
 
 # ---------- Cycles ----------
-
 
 def test_cycle_raises() -> None:
     a = _t("A", deps=["B"])
@@ -146,7 +142,6 @@ def test_three_cycle_raises() -> None:
 
 # ---------- Max depth ----------
 
-
 def test_max_depth_splits_long_chain() -> None:
     """Chain A→B→C→D→E→F with max_depth=3 splits into two chains."""
     tickets = [_t("A")]
@@ -170,7 +165,6 @@ def test_default_max_depth_is_ten() -> None:
 
 
 # ---------- Mixed scenarios ----------
-
 
 def test_mix_of_chain_independent_skipped_and_cross_repo() -> None:
     """
@@ -200,7 +194,7 @@ def test_refusal_cascades_to_dependents() -> None:
     """A ticket behind a refused ticket must be skipped too, not run as an
     'independent' chain (the BIL-9 incident: BIL-8 was refused for a garbage
     dep, and BIL-9 — which depended on BIL-8 — ran first, alone)."""
-    a = _t("A", deps=["GHOST-1"])  # unsatisfiable: not in queue, not merged
+    a = _t("A", deps=["GHOST-1"])   # unsatisfiable: not in queue, not merged
     b = _t("B", deps=["A"])
     c = _t("C", deps=["B"])
     result = group_into_chains([a, b, c])

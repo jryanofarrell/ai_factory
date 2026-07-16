@@ -247,7 +247,7 @@ def test_full_queue_scenario_groups_into_one_chain():
     from factory.chains import group_into_chains
 
     issues = [
-        _linear_issue("BIL-9", ["BIL-8"], linkify=False),  # bare, like the real data
+        _linear_issue("BIL-9", ["BIL-8"], linkify=False),   # bare, like the real data
         _linear_issue("BIL-8", ["BIL-6", "BIL-7"]),
         _linear_issue("BIL-7", ["BIL-5"]),
         _linear_issue("BIL-6", ["BIL-5"]),

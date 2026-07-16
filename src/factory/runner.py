@@ -999,11 +999,8 @@ def run_chain(
 
     if len(chain) == 1:
         rr = run_ticket(
-            chain[0],
-            repo,
-            capture_cost=capture_cost,
-            dry_run=dry_run,
-            log_dir=log_dir,
+            chain[0], repo,
+            capture_cost=capture_cost, dry_run=dry_run, log_dir=log_dir,
             quota_tracker=quota_tracker,
             executor_providers=executor_providers,
             max_utilization=max_utilization,
@@ -1037,25 +1034,17 @@ def run_chain(
     for ticket in chain:
         typer.echo(f"\n══ chain ticket {ticket.id}: {ticket.title} ══")
         rr = _run_one_ticket_on_chain_branch(
-            ticket=ticket,
-            repo=repo,
-            branch=branch,
+            ticket=ticket, repo=repo, branch=branch,
             capture_cost=capture_cost,
-            providers=_providers,
-            quota_tracker=quota_tracker,
-            max_utilization=max_utilization,
-            log_dir=log_dir,
+            providers=_providers, quota_tracker=quota_tracker,
+            max_utilization=max_utilization, log_dir=log_dir,
         )
         result.per_ticket.append(rr)
         if not rr.success:
             result.error = f"Chain failed at {ticket.id}: {rr.error or rr.reason}"
             _finish_partial_chain(
-                result=result,
-                chain=chain,
-                failed=ticket,
-                repo=repo,
-                branch=branch,
-                dry_run=dry_run,
+                result=result, chain=chain, failed=ticket,
+                repo=repo, branch=branch, dry_run=dry_run,
             )
             result.duration_s = _time.monotonic() - start
             _return_to_default(repo.local_path, repo.default_branch)
@@ -1126,21 +1115,16 @@ def _run_one_ticket_on_chain_branch(
     try:
         if ticket.subtasks:
             agent = _run_subtask_loop(
-                ticket=ticket,
-                repo_path=repo.local_path,
-                capture_cost=capture_cost,
-                providers=providers,
-                quota_tracker=quota_tracker,
-                max_utilization=max_utilization,
+                ticket=ticket, repo_path=repo.local_path,
+                capture_cost=capture_cost, providers=providers,
+                quota_tracker=quota_tracker, max_utilization=max_utilization,
             )
         else:
             agent = _run_with_fallback(
                 repo.local_path,
                 _build_prompt(ticket, repo.local_path),
-                capture_cost=capture_cost,
-                budget_minutes=None,
-                providers=providers,
-                quota_tracker=quota_tracker,
+                capture_cost=capture_cost, budget_minutes=None,
+                providers=providers, quota_tracker=quota_tracker,
                 max_utilization=max_utilization,
             )
         rr.exit_code = agent.exit_code
@@ -1195,13 +1179,9 @@ def _run_one_ticket_on_chain_branch(
             r = run_shell_command(test_cmd, repo.local_path)
             if r.returncode != 0:
                 repair = _attempt_test_repair(
-                    ticket=ticket,
-                    repo_path=repo.local_path,
-                    test_cmd=test_cmd,
-                    exit_code=r.returncode,
-                    capture_cost=capture_cost,
-                    providers=providers,
-                    quota_tracker=quota_tracker,
+                    ticket=ticket, repo_path=repo.local_path, test_cmd=test_cmd,
+                    exit_code=r.returncode, capture_cost=capture_cost,
+                    providers=providers, quota_tracker=quota_tracker,
                     max_utilization=max_utilization,
                 )
                 if repair.exit_code != 0 or repair.timed_out or repair.usage_limit_hit:
@@ -1211,7 +1191,9 @@ def _run_one_ticket_on_chain_branch(
                     return _finalise(rr, start, started_at, log_dir)
                 r = run_shell_command(test_cmd, repo.local_path)
                 if r.returncode != 0:
-                    rr.error = f"Tests failed after one repair attempt (exit {r.returncode})"
+                    rr.error = (
+                        f"Tests failed after one repair attempt (exit {r.returncode})"
+                    )
                     rr.reason = "tests_failed"
                     _discard_uncommitted(repo.local_path)
                     return _finalise(rr, start, started_at, log_dir)
@@ -1220,15 +1202,14 @@ def _run_one_ticket_on_chain_branch(
 
         # Memory file: Claude writes it; fall back if it forgot.
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        memory_file = repo.local_path / ".claude" / "memory" / f"{ticket.id.lower()}_{today}.md"
+        memory_file = (
+            repo.local_path / ".claude" / "memory" / f"{ticket.id.lower()}_{today}.md"
+        )
         if not memory_file.exists():
             write_run_memory(
-                local_path=repo.local_path,
-                ticket_id=ticket.id,
-                pr_url="(pending)",
-                files_changed=files_changed,
-                cost_usd=agent.cost_usd,
-                duration_s=_time.monotonic() - start,
+                local_path=repo.local_path, ticket_id=ticket.id,
+                pr_url="(pending)", files_changed=files_changed,
+                cost_usd=agent.cost_usd, duration_s=_time.monotonic() - start,
             )
 
         commit(repo.local_path, f"{ticket.id}: {ticket.title}")
@@ -1284,7 +1265,8 @@ def _finish_partial_chain(
     n_ok = len(succeeded)
     if n_ok == 0:
         typer.echo(
-            f"\nChain failed at its first ticket {failed.id}. Branch '{branch}' preserved; no PR.",
+            f"\nChain failed at its first ticket {failed.id}. "
+            f"Branch '{branch}' preserved; no PR.",
             err=True,
         )
         return
@@ -1316,7 +1298,7 @@ def _finish_partial_chain(
         )
         return
 
-    not_attempted = chain[len(result.per_ticket) :]
+    not_attempted = chain[len(result.per_ticket):]
     push(repo.local_path, branch)
     pr_url = create_pr(
         repo.local_path,
