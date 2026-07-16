@@ -55,11 +55,15 @@ def _enter_patches(stack: ExitStack) -> None:
 
 # ---------- Single-ticket chain ----------
 
+
 def test_single_ticket_chain_delegates_to_run_ticket(tmp_path: Path) -> None:
     """run_chain([T]) calls run_ticket and wraps the result."""
     rr = RunResult(
-        ticket_id="T1", success=True, pr_url="https://github.com/x/pr/1",
-        branch="factory/t1-abc", duration_s=1.0,
+        ticket_id="T1",
+        success=True,
+        pr_url="https://github.com/x/pr/1",
+        branch="factory/t1-abc",
+        duration_s=1.0,
     )
     with patch("factory.runner.run_ticket", return_value=rr) as run_ticket_mock:
         result = run_chain([_t("T1")], _repo(tmp_path))
@@ -73,6 +77,7 @@ def test_single_ticket_chain_delegates_to_run_ticket(tmp_path: Path) -> None:
 
 
 # ---------- Multi-ticket happy path ----------
+
 
 def test_multi_ticket_chain_opens_pr_with_combined_title(tmp_path: Path) -> None:
     """A three-ticket chain commits each one and opens one PR with all three."""
@@ -110,6 +115,7 @@ def test_multi_ticket_chain_opens_pr_with_combined_title(tmp_path: Path) -> None
 
 # ---------- Mid-chain failure ----------
 
+
 def test_mid_chain_failure_opens_partial_pr(tmp_path: Path) -> None:
     """Ticket 2 fails → partial PR with ticket 1's commit; T3 not attempted (ADR-023)."""
     with ExitStack() as stack:
@@ -118,9 +124,9 @@ def test_mid_chain_failure_opens_partial_pr(tmp_path: Path) -> None:
             patch(
                 "factory.runner._run_with_fallback",
                 side_effect=[
-                    AgentResult(exit_code=0, provider="claude"),    # T1 ok
-                    AgentResult(exit_code=2, provider="claude"),    # T2 fails
-                    AgentResult(exit_code=0, provider="claude"),    # T3 should never run
+                    AgentResult(exit_code=0, provider="claude"),  # T1 ok
+                    AgentResult(exit_code=2, provider="claude"),  # T2 fails
+                    AgentResult(exit_code=0, provider="claude"),  # T3 should never run
                 ],
             )
         )
@@ -132,14 +138,14 @@ def test_mid_chain_failure_opens_partial_pr(tmp_path: Path) -> None:
         chain = [_t("T1"), _t("T2", deps=["T1"]), _t("T3", deps=["T2"])]
         result = run_chain(chain, _repo(tmp_path))
 
-    assert result.success is False                    # the chain itself still failed
+    assert result.success is False  # the chain itself still failed
     assert result.pr_url == "https://github.com/x/pr/7"
     assert "T2" in (result.error or "")
-    assert len(result.per_ticket) == 2                # T1 + T2, T3 never attempted
+    assert len(result.per_ticket) == 2  # T1 + T2, T3 never attempted
     assert result.per_ticket[0].success is True
     assert result.per_ticket[0].pr_url == "https://github.com/x/pr/7"
     assert result.per_ticket[1].success is False
-    assert result.per_ticket[1].pr_url is None        # the failed ticket isn't in the PR
+    assert result.per_ticket[1].pr_url is None  # the failed ticket isn't in the PR
     push_mock.assert_called_once()
     # Partial marker in title; body names the failed ticket and the queued tail.
     pr_title = create_pr_mock.call_args.kwargs["title"]
@@ -184,9 +190,7 @@ def test_partial_chain_secret_scan_rolls_back_and_downgrades(tmp_path: Path) -> 
                 ],
             )
         )
-        stack.enter_context(
-            patch("factory.runner.secret_scan", return_value=["aws-access-key"])
-        )
+        stack.enter_context(patch("factory.runner.secret_scan", return_value=["aws-access-key"]))
         create_pr_mock = stack.enter_context(patch("factory.runner.create_pr"))
         undo_mock = stack.enter_context(patch("factory.runner.undo_commit"))
         delete_branch_mock = stack.enter_context(patch("factory.runner.delete_branch"))
@@ -197,7 +201,7 @@ def test_partial_chain_secret_scan_rolls_back_and_downgrades(tmp_path: Path) -> 
     assert result.success is False
     assert result.branch is None
     assert "secret scan" in (result.error or "").lower()
-    undo_mock.assert_called_once()          # only T1's commit existed
+    undo_mock.assert_called_once()  # only T1's commit existed
     delete_branch_mock.assert_called_once()
     create_pr_mock.assert_not_called()
     # T1's rolled-back success must not be written back as "PR opened".
@@ -214,9 +218,7 @@ def test_chain_aborts_on_all_providers_exhausted(tmp_path: Path) -> None:
                 "factory.runner._run_with_fallback",
                 side_effect=[
                     AgentResult(exit_code=0, provider="claude"),
-                    AgentResult(
-                        exit_code=-1, usage_limit_hit=True, provider="exhausted"
-                    ),
+                    AgentResult(exit_code=-1, usage_limit_hit=True, provider="exhausted"),
                 ],
             )
         )
@@ -236,6 +238,7 @@ def test_chain_aborts_on_all_providers_exhausted(tmp_path: Path) -> None:
 
 # ---------- Secret scan failure ----------
 
+
 def test_chain_secret_scan_failure_undoes_all_commits_and_deletes_branch(
     tmp_path: Path,
 ) -> None:
@@ -249,9 +252,7 @@ def test_chain_secret_scan_failure_undoes_all_commits_and_deletes_branch(
             )
         )
         # Override the base patch — make secret_scan return leaks for this test.
-        stack.enter_context(
-            patch("factory.runner.secret_scan", return_value=["aws-access-key"])
-        )
+        stack.enter_context(patch("factory.runner.secret_scan", return_value=["aws-access-key"]))
         create_pr_mock = stack.enter_context(patch("factory.runner.create_pr"))
         undo_mock = stack.enter_context(patch("factory.runner.undo_commit"))
         delete_branch_mock = stack.enter_context(patch("factory.runner.delete_branch"))

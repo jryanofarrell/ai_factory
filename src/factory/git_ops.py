@@ -65,7 +65,8 @@ def check_tools(providers: list[str] | None = None) -> None:
     _active = set(providers or ["claude"])
     base = [t for t in ("git", "gh") if not shutil.which(t)]
     provider_missing = [
-        f"{name} (install: {_PROVIDER_INSTALL_HINTS[name]})" if name in _PROVIDER_INSTALL_HINTS
+        f"{name} (install: {_PROVIDER_INSTALL_HINTS[name]})"
+        if name in _PROVIDER_INSTALL_HINTS
         else name
         for name, binary in _PROVIDER_BINS.items()
         if name in _active and not shutil.which(binary)
