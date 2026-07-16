@@ -9,11 +9,13 @@ This is the interactive counterpart to `factory address-pr-comments`, which runs
 ## Invocation
 
 ```
+/address-pr <pr-url>
 /address-pr [<repo-key>] <pr-number>
 ```
 
-- `<repo-key>` — a repo from `manifest.yaml` (e.g. `billy-ai`); the PR lives in that target repo and work happens in `repos/<repo-key>/`. **Read that repo's `CLAUDE.md` before proposing anything.**
-- Omitted → the PR belongs to the current repo (ai_factory itself).
+- **Preferred: a GitHub PR URL** (e.g. `https://github.com/jryanofarrell/billy-ai/pull/6`). Infer everything from it: extract `<owner>/<repo>` and the PR number, then resolve the working copy by matching `<owner>/<repo>` against each repo's `github:` field in `manifest.yaml` → work in `repos/<repo-key>/`. If it matches ai_factory's own remote instead, work in the current repo. If it matches neither, say so and stop — don't guess at a checkout location.
+- Alternatively `<repo-key>` (a repo from `manifest.yaml`) + PR number, or a bare PR number for the current repo (ai_factory itself).
+- Whenever the PR lives in a target repo: **read that repo's `CLAUDE.md` before proposing anything.**
 
 ## Step 1 — Fetch and propose (read-only; no file writes, no git writes)
 
