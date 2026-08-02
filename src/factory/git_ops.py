@@ -382,13 +382,18 @@ def _parse_frontmatter(content: str) -> dict:
     return result
 
 
+def _natural_key(name: str) -> list:
+    """Sort key that orders embedded numbers numerically (bil-4 before bil-10)."""
+    return [int(tok) if tok.isdigit() else tok.lower() for tok in re.split(r"(\d+)", name)]
+
+
 def rebuild_memory_index(local_path: Path) -> None:
     """Rebuild .claude/memory/MEMORY.md from individual memory file frontmatter."""
     memory_dir = local_path / ".claude" / "memory"
     if not memory_dir.exists():
         return
     entries = []
-    for md_file in sorted(memory_dir.glob("*.md")):
+    for md_file in sorted(memory_dir.glob("*.md"), key=lambda p: _natural_key(p.name)):
         if md_file.name == "MEMORY.md":
             continue
         fm = _parse_frontmatter(md_file.read_text())
