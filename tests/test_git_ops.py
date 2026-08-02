@@ -220,3 +220,24 @@ def test_rebuild_index_reads_ticket_memory_frontmatter(tmp_path: Path):
     assert "# Memory Index" in index
     assert "[BIL-16: Sitemap image discovery](bil-16_2026-08-02.md)" in index
     assert "Web discovery reads image tags in the sitemap." in index
+
+
+def test_rebuild_index_orders_tickets_naturally(tmp_path: Path):
+    from factory.git_ops import write_ticket_memory
+
+    for tid, date in [("BIL-4", "2026-07-14"), ("BIL-10", "2026-07-16"), ("BIL-9", "2026-07-14")]:
+        write_ticket_memory(
+            local_path=tmp_path,
+            ticket_id=tid,
+            title="t",
+            summary="Did a thing.",
+            pr_url="(pending)",
+            files_changed=["a.py"],
+            cost_usd=None,
+            duration_s=1.0,
+            date_str=date,
+        )
+    rebuild_memory_index(tmp_path)
+    index = (tmp_path / ".claude" / "memory" / "MEMORY.md").read_text()
+    # Natural order: BIL-4 < BIL-9 < BIL-10, not lexicographic (which puts 10 first).
+    assert index.index("BIL-4") < index.index("BIL-9") < index.index("BIL-10")
