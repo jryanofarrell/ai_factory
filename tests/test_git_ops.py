@@ -241,3 +241,39 @@ def test_rebuild_index_orders_tickets_naturally(tmp_path: Path):
     index = (tmp_path / ".claude" / "memory" / "MEMORY.md").read_text()
     # Natural order: BIL-4 < BIL-9 < BIL-10, not lexicographic (which puts 10 first).
     assert index.index("BIL-4") < index.index("BIL-9") < index.index("BIL-10")
+
+
+def test_backfill_pr_url_rewrites_and_commits(tmp_path, monkeypatch):
+    from factory.git_ops import backfill_pr_url
+
+    repo = _make_git_repo(tmp_path)
+    mem = repo / ".claude" / "memory"
+    mem.mkdir(parents=True)
+    f = mem / "bil-9_2026-08-02.md"
+    f.write_text("---\nname: x\n---\n\n**PR:** (pending)\n**Files changed:**\n")
+    pushed = []
+    monkeypatch.setattr("factory.git_ops.push", lambda lp, br: pushed.append(br))
+
+    result = backfill_pr_url(repo, "somebranch", ["BIL-9"], "https://gh/pr/1")
+
+    assert result is True
+    assert "**PR:** https://gh/pr/1" in f.read_text()
+    assert pushed == ["somebranch"]
+    subject = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
+    assert subject == "chore: record PR url in memory"
+
+
+def test_backfill_pr_url_noop_without_pending(tmp_path, monkeypatch):
+    from factory.git_ops import backfill_pr_url
+
+    repo = _make_git_repo(tmp_path)
+    mem = repo / ".claude" / "memory"
+    mem.mkdir(parents=True)
+    (mem / "bil-9_2026-08-02.md").write_text("**PR:** https://already/1\n")
+    pushed = []
+    monkeypatch.setattr("factory.git_ops.push", lambda lp, br: pushed.append(br))
+
+    assert backfill_pr_url(repo, "b", ["BIL-9"], "https://gh/pr/2") is False
+    assert pushed == []

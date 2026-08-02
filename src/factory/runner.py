@@ -20,6 +20,7 @@ from pathlib import Path
 import typer
 
 from .git_ops import (
+    backfill_pr_url,
     check_scope,
     check_tools,
     commit,
@@ -312,6 +313,7 @@ def run_ticket(
         )
         result.pr_url = pr_url
         result.success = True
+        backfill_pr_url(repo.local_path, branch, [ticket.id], pr_url)
         typer.echo(f"\nPR opened: {pr_url}")
         return _finalise(result, start, started_at, log_dir)
 
@@ -1084,6 +1086,7 @@ def run_chain(
     # downstream can attribute the same PR to every chained ticket.
     for rr in result.per_ticket:
         rr.pr_url = pr_url
+    backfill_pr_url(repo.local_path, branch, [rr.ticket_id for rr in result.per_ticket], pr_url)
     result.duration_s = _time.monotonic() - start
     typer.echo(f"\nChain PR opened ({len(chain)} commits): {pr_url}")
     return result
@@ -1312,6 +1315,9 @@ def _finish_partial_chain(
     for rr in result.per_ticket:
         if rr.success:
             rr.pr_url = pr_url
+    backfill_pr_url(
+        repo.local_path, branch, [rr.ticket_id for rr in result.per_ticket if rr.success], pr_url
+    )
     typer.echo(
         f"\nChain failed at {failed.id}. Partial PR opened with the "
         f"{n_ok} completed ticket(s): {pr_url}",
