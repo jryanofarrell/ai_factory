@@ -84,8 +84,8 @@ query($identifier: String!) {
 """
 
 ISSUE_UPDATE_DESCRIPTION_MUTATION = """
-mutation($id: String!, $title: String, $description: String) {
-  issueUpdate(id: $id, input: { title: $title, description: $description }) {
+mutation($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) {
     success
     issue { id identifier url }
   }
@@ -221,9 +221,19 @@ class LinearClient:
         title: str | None = None,
         description: str | None = None,
     ) -> dict[str, Any]:
+        # Only include fields that were provided — passing description=None as an
+        # explicit mutation input CLEARS the description (a title-only update must
+        # never wipe the body).
+        update_input: dict[str, Any] = {}
+        if title is not None:
+            update_input["title"] = title
+        if description is not None:
+            update_input["description"] = description
+        if not update_input:
+            raise ValueError("update_issue: provide at least a title or description")
         data = self._query(
             ISSUE_UPDATE_DESCRIPTION_MUTATION,
-            {"id": issue_id, "title": title, "description": description},
+            {"id": issue_id, "input": update_input},
         )
         return data["issueUpdate"]["issue"]
 
