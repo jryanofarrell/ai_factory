@@ -698,6 +698,33 @@ Factory ran ticket **{ticket_id}** on {date_str}.
     return memory_path
 
 
+def backfill_pr_url(local_path: Path, branch: str, ticket_ids: list[str], pr_url: str) -> bool:
+    """Replace the `**PR:** (pending)` placeholder with the real URL in the given
+    tickets' memory files, then commit (scoped to .claude/memory) and push.
+
+    The per-ticket memory file is written and committed before the PR exists, so
+    its PR line is a placeholder until now. Runs after create_pr; adds one commit
+    to the branch (updating the open PR). No-op — no commit — if nothing changed.
+    Returns True if it pushed a backfill commit.
+    """
+    memory_dir = local_path / ".claude" / "memory"
+    if not memory_dir.exists() or not pr_url or pr_url == "(pending)":
+        return False
+    changed = False
+    for ticket_id in ticket_ids:
+        for md_file in memory_dir.glob(f"{ticket_id.lower()}_*.md"):
+            text = md_file.read_text()
+            if "**PR:** (pending)" in text:
+                md_file.write_text(text.replace("**PR:** (pending)", f"**PR:** {pr_url}"))
+                changed = True
+    if not changed:
+        return False
+    memory_scope = [".claude/memory"]
+    commit(local_path, "chore: record PR url in memory", memory_scope)
+    push(local_path, branch)
+    return True
+
+
 def secret_scan(local_path: Path) -> list[str]:
     """Run gitleaks on the latest commit. Returns list of rule names that fired.
     Returns empty list if gitleaks is not installed (soft failure)."""
