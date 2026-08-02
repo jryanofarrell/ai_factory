@@ -131,6 +131,10 @@ def _issue_to_ticket(issue: dict[str, Any], manifest: Manifest, default_repo: st
     if not acceptance_criteria:
         raise ValueError("description has no '## Acceptance Criteria' section")
 
+    summary = _extract_section(description, "Summary")
+    if not summary:
+        raise ValueError("description has no '## Summary' section")
+
     scope_paths: list[str] = []
     scope_text = _extract_section(description, "Scope Paths")
     if scope_text:
@@ -173,6 +177,7 @@ def _issue_to_ticket(issue: dict[str, Any], manifest: Manifest, default_repo: st
         title=issue["title"],
         target_repo=target_repo,
         acceptance_criteria=acceptance_criteria,
+        summary=summary,
         scope_paths=scope_paths,
         budget_tokens=budget_tokens,
         budget_minutes=budget_minutes,
@@ -195,6 +200,8 @@ def _validate_ticket(ticket: Ticket) -> None:
         raise ValueError("missing target_repo")
     if not ticket.acceptance_criteria:
         raise ValueError("missing acceptance_criteria")
+    if not ticket.summary:
+        raise ValueError("missing summary")
 
 
 def _hash(content: str) -> str:

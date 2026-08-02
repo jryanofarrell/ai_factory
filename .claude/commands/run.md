@@ -130,7 +130,7 @@ Before committing, write the memory file so it gets committed into the PR and la
 mkdir -p .claude/memory
 ```
 
-Write `.claude/memory/<ticket-id-lower>_<YYYY-MM-DD>.md` using the standard memory format below. **Do not touch `.claude/memory/MEMORY.md`** — it is rebuilt in a separate session PR after all tickets complete.
+Write `.claude/memory/<ticket-id-lower>_<YYYY-MM-DD>.md` using the exact format below. The memory record is sourced from the ticket's **`## Summary`** section — copy it verbatim into the body — so this file is identical whichever executor ran the ticket (ADR-024). **Do not touch `.claude/memory/MEMORY.md`** — the index is handled separately (Step 12); ticket PRs must never modify it.
 
 Then commit everything including the memory file:
 
@@ -139,27 +139,27 @@ git add -A
 git commit -m "<ticket-id>: <ticket-title>"
 ```
 
-**Memory file format:**
+**Memory file format** (matches `git_ops.write_ticket_memory` exactly):
 ```markdown
 ---
-name: <short descriptive name of what was built, e.g. "AiSession data model">
-description: <one sentence describing the key architectural fact — what was added/changed and the most important decision, e.g. "AiSession stored as JSONB on Job; summary union discriminated by `intent` field">
+name: <TICKET-ID>: <ticket title>
+description: <first sentence of the ticket's ## Summary>
 type: project
 ---
 
 Factory ran ticket **<TICKET-ID>** on <YYYY-MM-DD>.
 
-**PR:** (pending — will be updated after push)
+**PR:** (pending)
+**Duration:** <e.g. 7m 22s> · **Cost:** <e.g. $0.30 or n/a>
+
 **Files changed:**
 - <file1>
 - <file2>
 
-**Key decisions:**
-- <most important non-obvious architectural choice made during implementation>
-- <any naming conventions, field names, or patterns future work must follow>
-```
+## Summary
 
-The `name` and `description` must describe **what was built**, not the fact that the factory ran. A future Claude session will use these to decide whether to load the file. "AiSession data model" is good; "THM-5 run 2026-04-28" is useless.
+<the ticket's ## Summary section, verbatim>
+```
 
 ### Step 9 — Secret scan (optional)
 
@@ -211,11 +211,15 @@ uv run factory record-result \
   --branch "<branch name if preserved>"
 ```
 
-### Step 12 — Session memory PR (once, after all tickets)
+### Step 12 — Rebuild the memory index (once, after all tickets)
 
-After all tickets have been processed, open one memory index PR per repo that had at least one successful ticket. This is the only place MEMORY.md is written.
+After all tickets have been processed, rebuild the MEMORY.md index per repo that had at least one successful ticket. This is the only place MEMORY.md is written — ticket PRs never touch it (ADR-024).
 
-For each such repo:
+**Where the index update lands (conditional, per repo):**
+- **Exactly one ticket/chain PR this run for the repo, and no memory PR already open** → fold the index into that same PR: check out that PR's branch, rebuild MEMORY.md, commit `chore: update memory index`, and push to it. No separate PR.
+- **Otherwise** (multiple PRs this run, or an open `factory/memory-*` PR exists) → use/refresh a single separate `factory/memory-*` index PR as below.
+
+For the separate-PR case, for each such repo:
 
 ```bash
 cd <local_path>

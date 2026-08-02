@@ -4,7 +4,14 @@ from unittest.mock import patch
 
 import pytest
 
-from factory.git_ops import check_docker, check_scope, get_changed_files
+from factory.git_ops import (
+    _first_sentence,
+    check_docker,
+    check_scope,
+    get_changed_files,
+    rebuild_memory_index,
+    write_ticket_memory,
+)
 
 
 def _make_git_repo(tmp_path: Path) -> Path:
@@ -125,3 +132,58 @@ def test_check_docker_raises_when_daemon_stopped_on_non_macos():
     ):
         with pytest.raises(RuntimeError, match="Docker daemon is not running"):
             check_docker()
+
+
+def test_first_sentence_condenses():
+    assert _first_sentence("One. Two. Three.") == "One."
+    assert _first_sentence("No period here either") == "No period here either"
+    long = "x" * 300
+    assert len(_first_sentence(long)) <= 160
+
+
+def test_write_ticket_memory_uses_summary_and_skips_index(tmp_path: Path):
+    memory_dir = tmp_path / ".claude" / "memory"
+
+    path = write_ticket_memory(
+        local_path=tmp_path,
+        ticket_id="BIL-16",
+        title="Sitemap image discovery",
+        summary="Web discovery reads image tags in the sitemap. Falls back otherwise.",
+        pr_url="(pending)",
+        files_changed=["src/parts_parser/web/discovery.py"],
+        cost_usd=0.30,
+        duration_s=442.0,
+        date_str="2026-08-02",
+    )
+
+    assert path == memory_dir / "bil-16_2026-08-02.md"
+    text = path.read_text()
+    # Frontmatter: descriptive name + one-line description drawn from the summary.
+    assert "name: BIL-16: Sitemap image discovery" in text
+    assert "description: Web discovery reads image tags in the sitemap." in text
+    # Body carries the full semi-detailed summary and the basic run info.
+    assert "## Summary" in text
+    assert "Falls back otherwise." in text
+    assert "src/parts_parser/web/discovery.py" in text
+    # Invariant: the per-ticket write must never touch the shared index.
+    assert not (memory_dir / "MEMORY.md").exists()
+
+
+def test_rebuild_index_reads_ticket_memory_frontmatter(tmp_path: Path):
+    write_ticket_memory(
+        local_path=tmp_path,
+        ticket_id="BIL-16",
+        title="Sitemap image discovery",
+        summary="Web discovery reads image tags in the sitemap.",
+        pr_url="(pending)",
+        files_changed=["a.py"],
+        cost_usd=None,
+        duration_s=1.0,
+        date_str="2026-08-02",
+    )
+    rebuild_memory_index(tmp_path)
+
+    index = (tmp_path / ".claude" / "memory" / "MEMORY.md").read_text()
+    assert "# Memory Index" in index
+    assert "[BIL-16: Sitemap image discovery](bil-16_2026-08-02.md)" in index
+    assert "Web discovery reads image tags in the sitemap." in index

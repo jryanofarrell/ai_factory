@@ -15,6 +15,11 @@ budget_tokens: 10000
 budget_minutes: 5
 ---
 
+## Summary
+
+Adds an "Add AI factory test entry" line to the CHANGELOG under Unreleased to
+verify the executor pipeline end-to-end.
+
 ## Acceptance Criteria
 
 - A new line is added to `CHANGELOG.md` under an "Unreleased" section.
@@ -70,6 +75,17 @@ def test_missing_acceptance_criteria(tmp_path: Path) -> None:
         parse_ticket(write(tmp_path, bad))
 
 
+def test_summary_parsed(tmp_path: Path) -> None:
+    t = parse_ticket(write(tmp_path, VALID_TICKET))
+    assert "Add AI factory test entry" in t.summary
+
+
+def test_missing_summary(tmp_path: Path) -> None:
+    bad = VALID_TICKET.replace("## Summary", "## Overview")
+    with pytest.raises(ValueError, match="Summary"):
+        parse_ticket(write(tmp_path, bad))
+
+
 def test_no_frontmatter(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="frontmatter"):
         parse_ticket(write(tmp_path, "# Just a heading\n\nSome text."))
@@ -82,6 +98,10 @@ id: THMS-1
 title: My ticket
 target_repo: my-repo
 ---
+
+## Summary
+
+Does the minimal something for a defaults test.
 
 ## Acceptance Criteria
 
@@ -159,6 +179,10 @@ id: THM-99
 title: Sample with subtasks
 target_repo: thms-platform
 ---
+
+## Summary
+
+Adds the myVendor slice (schema, manager, routes) across three subtasks.
 
 ## Acceptance Criteria
 
@@ -239,6 +263,10 @@ title: Depends on two others
 target_repo: thms-platform
 ---
 
+## Summary
+
+Depends on two other tickets.
+
 ## Acceptance Criteria
 
 - x
@@ -288,6 +316,10 @@ id: THM-1
 title: Minimal
 target_repo: r
 ---
+
+## Summary
+
+Minimal subtask ticket.
 
 ## Acceptance Criteria
 
