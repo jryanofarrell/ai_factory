@@ -72,8 +72,7 @@ def run(
 
     print(
         f"$ opencode run --format json --dir <repo> --dangerously-skip-permissions "
-        f"-m {selected_model} <prompt>"
-        + (f" (timeout {int(timeout_s)}s)" if timeout_s else "")
+        f"-m {selected_model} <prompt>" + (f" (timeout {int(timeout_s)}s)" if timeout_s else "")
     )
 
     proc = subprocess.Popen(

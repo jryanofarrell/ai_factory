@@ -172,9 +172,7 @@ def test_subtask_aggregates_tokens_and_cost(tmp_path: Path) -> None:
     ]
     with ExitStack() as stack:
         _enter_common_patches(stack)
-        stack.enter_context(
-            patch("factory.runner._run_with_fallback", side_effect=side_effects)
-        )
+        stack.enter_context(patch("factory.runner._run_with_fallback", side_effect=side_effects))
         result = run_ticket(ticket, _repo(tmp_path))
 
     assert result.tokens_used == 300
