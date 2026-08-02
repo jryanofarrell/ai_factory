@@ -167,9 +167,12 @@ def _run(cmd: list[str], cwd: Path, stream: bool = False) -> subprocess.Complete
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
 
 
-def is_dirty(local_path: Path) -> bool:
+def is_dirty(local_path: Path, paths: list[str] | None = None) -> bool:
+    cmd = ["git", "status", "--porcelain"]
+    if paths:
+        cmd += ["--", *paths]
     result = subprocess.run(
-        ["git", "status", "--porcelain"],
+        cmd,
         cwd=local_path,
         capture_output=True,
         text=True,
@@ -177,8 +180,8 @@ def is_dirty(local_path: Path) -> bool:
     return bool(result.stdout.strip())
 
 
-def has_changes(local_path: Path) -> bool:
-    return is_dirty(local_path)
+def has_changes(local_path: Path, paths: list[str] | None = None) -> bool:
+    return is_dirty(local_path, paths)
 
 
 def get_changed_files(local_path: Path) -> list[str]:
@@ -330,8 +333,11 @@ def run_shell_command(cmd: str, cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, shell=True, cwd=cwd)  # noqa: S602
 
 
-def commit(local_path: Path, message: str) -> None:
-    result = _run(["git", "add", "-A"], cwd=local_path)
+def commit(local_path: Path, message: str, paths: list[str] | None = None) -> None:
+    add_cmd = ["git", "add", "-A"]
+    if paths:
+        add_cmd += ["--", *paths]
+    result = _run(add_cmd, cwd=local_path)
     if result.returncode != 0:
         raise RuntimeError("git add failed")
     result = _run(["git", "commit", "-m", message], cwd=local_path, stream=True)
@@ -474,9 +480,12 @@ def _fold_index_into_pr(
 
     rebuild_memory_index(local_path)
     pr_url = _pr_url_for_branch(local_path, github, branch)
-    if not has_changes(local_path):
+    # Scope to .claude/memory/ (per ADR-024 / the memory-index PR scoping) so
+    # stray working-tree files can't ride along in the folded commit.
+    memory_scope = [".claude/memory"]
+    if not has_changes(local_path, memory_scope):
         return pr_url
-    commit(local_path, "chore: update memory index")
+    commit(local_path, "chore: update memory index", memory_scope)
     push(local_path, branch)
     return pr_url
 
@@ -587,13 +596,16 @@ def create_memory_pr(
         _extract_session_memory_files(local_path, session_branches)
 
     rebuild_memory_index(local_path)
-    if not has_changes(local_path):
+    # Scope to .claude/memory/ so leftover working-tree junk (test __pycache__,
+    # build output in repos without a .gitignore) can't ride along in the index PR.
+    memory_scope = [".claude/memory"]
+    if not has_changes(local_path, memory_scope):
         if existing is not None:
             return pr_url
         delete_branch(local_path, branch, default_branch)
         return None
 
-    commit(local_path, "chore: rebuild memory index")
+    commit(local_path, "chore: rebuild memory index", memory_scope)
     push(local_path, branch)
 
     if existing is not None:

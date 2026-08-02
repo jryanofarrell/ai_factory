@@ -8,7 +8,9 @@ from factory.git_ops import (
     _first_sentence,
     check_docker,
     check_scope,
+    commit,
     get_changed_files,
+    has_changes,
     rebuild_memory_index,
     write_ticket_memory,
 )
@@ -82,6 +84,37 @@ def test_get_changed_files_expands_untracked_directories(tmp_path):
 
     assert ".claude/memory/hel-1_2026-05-27.md" in files
     assert ".claude/" not in files
+
+
+def test_has_changes_scoped_to_paths(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    (repo / "junk.pyc").write_text("bytecode")
+    assert has_changes(repo)
+    assert not has_changes(repo, [".claude/memory"])
+
+    memory_dir = repo / ".claude" / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "MEMORY.md").write_text("# Memory Index\n")
+    assert has_changes(repo, [".claude/memory"])
+
+
+def test_commit_scoped_to_paths_leaves_other_files_uncommitted(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    memory_dir = repo / ".claude" / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "MEMORY.md").write_text("# Memory Index\n")
+    (repo / "junk.pyc").write_text("bytecode")
+
+    commit(repo, "chore: rebuild memory index", [".claude/memory"])
+
+    committed = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert committed == [".claude/memory/MEMORY.md"]
+    assert has_changes(repo)  # junk.pyc still dirty, not swept into the commit
 
 
 def test_check_docker_returns_when_daemon_running():
