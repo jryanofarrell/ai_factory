@@ -10,6 +10,8 @@ FIXTURE_ISSUE = {
     "identifier": "THM-5",
     "title": "Add health check endpoint",
     "description": (
+        "## Summary\n\n"
+        "Adds a static GET /health endpoint returning ok for uptime checks.\n\n"
         "## Acceptance Criteria\n\n"
         "- GET /health returns 200\n"
         '- Response body is `{"status": "ok"}`\n\n'
@@ -50,13 +52,23 @@ def test_happy_path():
     assert ticket.budget_tokens == 20000
     assert ticket.budget_minutes == 15
     assert "static response" in ticket.notes
+    assert "GET /health" in ticket.summary
     assert ticket.linear_url == "https://linear.app/test/issue/THM-5/add-health-check"
+
+
+def test_missing_summary_raises():
+    issue = {**FIXTURE_ISSUE, "description": "## Acceptance Criteria\n\n- done"}
+    with pytest.raises(ValueError, match="Summary"):
+        _issue_to_ticket(issue, MANIFEST, "thms-platform")
 
 
 def test_target_repo_override():
     issue = {
         **FIXTURE_ISSUE,
-        "description": "## Acceptance Criteria\n\n- done\n\n## Target Repo\n\nthms-platform",
+        "description": (
+            "## Summary\n\nDoes a thing.\n\n"
+            "## Acceptance Criteria\n\n- done\n\n## Target Repo\n\nthms-platform"
+        ),
     }
     ticket = _issue_to_ticket(issue, MANIFEST, "wrong-default")
     assert ticket.target_repo == "thms-platform"
@@ -69,7 +81,10 @@ def test_missing_acceptance_criteria_raises():
 
 
 def test_defaults_applied_when_no_budget_section():
-    issue = {**FIXTURE_ISSUE, "description": "## Acceptance Criteria\n\n- done"}
+    issue = {
+        **FIXTURE_ISSUE,
+        "description": "## Summary\n\nDoes a thing.\n\n## Acceptance Criteria\n\n- done",
+    }
     ticket = _issue_to_ticket(issue, MANIFEST, "thms-platform")
     assert ticket.budget_tokens == 50_000
     assert ticket.budget_minutes == 30
@@ -79,6 +94,7 @@ def test_scope_paths_strips_comments_and_blanks():
     issue = {
         **FIXTURE_ISSUE,
         "description": (
+            "## Summary\n\nDoes a thing.\n\n"
             "## Acceptance Criteria\n\n- done\n\n"
             "## Scope Paths\n\n"
             "# this is a comment\n\n"
@@ -101,6 +117,7 @@ def test_to_markdown_round_trips(tmp_path):
     assert parsed.id == ticket.id
     assert parsed.title == ticket.title
     assert parsed.acceptance_criteria == ticket.acceptance_criteria
+    assert parsed.summary == ticket.summary
     assert parsed.scope_paths == ticket.scope_paths
     assert parsed.budget_tokens == ticket.budget_tokens
 
@@ -152,6 +169,7 @@ def test_recipes_subtasks_depends_on_survive_linear_pull():
     unchained (the BIL-4..9 incident, 2026-07-13)."""
     issue = dict(FIXTURE_ISSUE)
     issue["description"] = (
+        "## Summary\n\nAdds a Widget model and its round-trip test.\n\n"
         "## Acceptance Criteria\n\n- works\n\n"
         "## Subtasks\n\n"
         "### 1. Create the model\n"
@@ -188,7 +206,10 @@ def test_recipes_subtasks_depends_on_survive_linear_pull():
 
 def test_depends_on_none_sentinel_from_linear():
     issue = dict(FIXTURE_ISSUE)
-    issue["description"] = "## Acceptance Criteria\n\n- works\n\n## Depends On\n\n(none)\n"
+    issue["description"] = (
+        "## Summary\n\nDoes a thing.\n\n## Acceptance Criteria\n\n- works\n\n"
+        "## Depends On\n\n(none)\n"
+    )
     ticket = _issue_to_ticket(issue, MANIFEST, "thms-platform")
     assert ticket.depends_on == []
 
@@ -198,7 +219,7 @@ def test_depends_on_survives_linear_autolinking():
     description; the parsed dep must be the bare ID, not the link."""
     issue = dict(FIXTURE_ISSUE)
     issue["description"] = (
-        "## Acceptance Criteria\n\n- works\n\n"
+        "## Summary\n\nDoes a thing.\n\n## Acceptance Criteria\n\n- works\n\n"
         "## Depends On\n\n"
         "[BIL-6](https://linear.app/jryanofarrell-ai-factory/issue/BIL-6/web-pipeline)\n"
         "[BIL-7](https://linear.app/jryanofarrell-ai-factory/issue/BIL-7/pdf-pipeline)\n"
@@ -222,7 +243,7 @@ def _linear_issue(identifier: str, deps: list[str], linkify: bool = True) -> dic
         "identifier": identifier,
         "title": f"{identifier} work",
         "description": (
-            "## Acceptance Criteria\n\n- works\n\n"
+            "## Summary\n\nDoes a thing.\n\n## Acceptance Criteria\n\n- works\n\n"
             "## Subtasks\n\n"
             "### 1. Do the thing\n"
             "- Files: src/x.py\n"
@@ -247,7 +268,7 @@ def test_full_queue_scenario_groups_into_one_chain():
     from factory.chains import group_into_chains
 
     issues = [
-        _linear_issue("BIL-9", ["BIL-8"], linkify=False),   # bare, like the real data
+        _linear_issue("BIL-9", ["BIL-8"], linkify=False),  # bare, like the real data
         _linear_issue("BIL-8", ["BIL-6", "BIL-7"]),
         _linear_issue("BIL-7", ["BIL-5"]),
         _linear_issue("BIL-6", ["BIL-5"]),

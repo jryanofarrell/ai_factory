@@ -96,6 +96,10 @@ Depends On:  <ticket IDs or "(none)">
 Recipes:      <recipe paths or "(none)">
 ════════════════════════════════════════════════════════════════════
 
+## Summary
+
+<2–4 sentences: what this ticket delivers + the key decision>
+
 ## Context
 
 <context paragraphs>
@@ -157,6 +161,7 @@ Created N ticket(s). Open them in Linear, review, and mark "Ready For AI" when y
 - **One unit of work per ticket.** If a ticket is too big to stay coherent, split it and say why.
 - **If target_repo is ambiguous**, ask before drafting. Don't guess.
 - **Always include `Context`, `Plan`, `Design decisions`, and `Acceptance Criteria`.** They are not optional. If those sections would be thin because the conversation didn't establish enough, gather more context (run `/ideate` or ask the user directly) before drafting — do not pad with generic prose.
+- **Every ticket needs a `## Summary`.** A required 2–4 sentence statement of what the ticket delivers and its key decision, written for a future reader of the codebase memory. The factory writes this verbatim into the per-ticket memory file (ADR-024), so it — not executor prose — is the durable record. `factory pull-tickets` rejects a ticket with no `## Summary`.
 - **Declare dependencies explicitly.** If ticket B requires ticket A's changes to land first, B's `Depends On` must list A's ID. Sequential implementation does not imply dependency — only declare it when the work cannot start without the prior ticket merged.
 - **Tie new files of recurring types to their recipe.** Any ticket that adds or substantially modifies a file matching a recurring file-type pattern in the repo must include the matching `.ai/recipes/<area>/<task>.md` in both `## Recipes` and `## Scope Paths`. The recipe is named per the rule in `/ai-files` (directory-driven, codebase vocabulary). If no such recipe exists yet, the ticket creates it. See ADR-015 and ADR-016.
 
@@ -165,6 +170,14 @@ Created N ticket(s). Open them in Linear, review, and mark "Ready For AI" when y
 The description passed to `create-issue` is structured Markdown. Some sections are parsed by `factory pull-tickets` (per ADR-010); the rest are human / executor-facing context that the factory does not parse but the executor reads as part of the ticket prompt:
 
 ```markdown
+## Summary
+
+<2–4 sentences: WHAT this ticket delivers and the single key decision/approach.
+Written for someone reading the codebase memory later, not the executor. This
+section is REQUIRED and becomes the per-ticket memory record verbatim (ADR-024),
+so make it accurate and self-contained. Distinct from Context: Context is the
+"why" / background; Summary is the "what got built".>
+
 ## Context
 
 <short paragraphs covering what exists, what this ticket changes, and why it exists now>

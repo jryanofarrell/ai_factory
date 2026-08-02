@@ -69,7 +69,7 @@ def test_run_ticket_attempts_one_test_repair(tmp_path: Path) -> None:
                 subprocess.CompletedProcess("npm test", 0),
             ],
         ) as run_shell,
-        patch("factory.runner.write_run_memory"),
+        patch("factory.runner._write_and_verify_memory"),
         patch("factory.runner.commit"),
         patch("factory.runner.secret_scan", return_value=[]),
         patch(
@@ -112,7 +112,7 @@ def test_run_ticket_treats_scope_violations_as_advisory(tmp_path: Path) -> None:
         patch("factory.runner.check_scope", return_value=["README.md"]),
         patch("factory.runner.detect_install_command", return_value=None),
         patch("factory.runner.detect_test_command", return_value=None),
-        patch("factory.runner.write_run_memory"),
+        patch("factory.runner._write_and_verify_memory"),
         patch("factory.runner.commit") as commit,
         patch("factory.runner.secret_scan", return_value=[]),
         patch(

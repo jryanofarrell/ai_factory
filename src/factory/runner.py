@@ -37,7 +37,7 @@ from .git_ops import (
     secret_scan,
     sync_repo,
     undo_commit,
-    write_run_memory,
+    write_ticket_memory,
 )
 from .manifest import RepoConfig, load_manifest
 from .providers import AgentResult
@@ -273,22 +273,11 @@ def run_ticket(
         if violations:
             _report_scope_advisory(violations)
 
-        # Memory file: Claude writes it as part of its task (see _build_prompt).
-        # Fall back to the generic writer only if Claude forgot.
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
-        memory_file = repo.local_path / ".claude" / "memory" / f"{ticket.id.lower()}_{today}.md"
-        if not memory_file.exists():
-            typer.echo(
-                "  Note: Claude did not write a memory file — using generic fallback.", err=True
-            )
-            write_run_memory(
-                local_path=repo.local_path,
-                ticket_id=ticket.id,
-                pr_url="(pending)",
-                files_changed=files_changed,
-                cost_usd=agent.cost_usd,
-                duration_s=_time.monotonic() - start,
-            )
+        # Memory file: the factory writes it deterministically from the ticket's
+        # own summary — one golden path, no executor prose required, no fallback.
+        _write_and_verify_memory(
+            repo.local_path, ticket, files_changed, agent.cost_usd, _time.monotonic() - start
+        )
 
         # Commit
         commit_msg = f"{ticket.id}: {ticket.title}"
@@ -867,10 +856,34 @@ def _recipe_loading_instructions(ticket: Ticket) -> list[str]:
     return lines
 
 
-def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
-    memory_path = f".claude/memory/{ticket.id.lower()}_{today}.md"
+def _write_and_verify_memory(
+    local_path: Path,
+    ticket: Ticket,
+    files_changed: list[str],
+    cost_usd: float | None,
+    duration_s: float,
+) -> None:
+    """Write the per-ticket memory file from the ticket's summary, then verify it.
 
+    Single golden path — no executor prose, no fallback. If the file is missing
+    or malformed, raise so the run fails loudly instead of degrading silently.
+    """
+    path = write_ticket_memory(
+        local_path=local_path,
+        ticket_id=ticket.id,
+        title=ticket.title,
+        summary=ticket.summary,
+        pr_url="(pending)",
+        files_changed=files_changed,
+        cost_usd=cost_usd,
+        duration_s=duration_s,
+    )
+    text = path.read_text() if path.exists() else ""
+    if not ticket.summary.strip() or "## Summary" not in text:
+        raise RuntimeError(f"Memory file for {ticket.id} was not written correctly ({path}).")
+
+
+def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
     rules = _load_repo_rules(repo_path)
     preamble = []
     if rules:
@@ -921,32 +934,9 @@ def _build_prompt(ticket: Ticket, repo_path: Path) -> str:
         "Make the necessary changes to satisfy the acceptance criteria.",
         "Do NOT run git commit. Do NOT run git push. Only edit files.",
         "",
-        f"When you are done, write a memory file at `{memory_path}` using this exact format:",
-        "",
-        "```",
-        "---",
-        "name: <short descriptive name of what was built — NOT the ticket ID>",
-        "description: <one sentence: what was added/changed and the key decision or pattern>",
-        "type: project",
-        "---",
-        "",
-        f"Factory ran ticket **{ticket.id}** on {today}.",
-        "",
-        "**PR:** (pending)",
-        "**Files changed:**",
-        "- <list key files modified>",
-        "",
-        "**Key decisions:**",
-        "- <most important non-obvious architectural choice>",
-        "```",
-        "",
-        "The name and description must describe WHAT WAS BUILT, not the ticket ID.",
-        "Good: `name: Contractor detail page` / `description: GET /contractors/:id "
-        "route + detail page with job history table`",
-        f"Bad:  `name: {ticket.id} run {today}` / `description: Factory ran {ticket.id}`",
-        "",
-        "Do NOT touch `.claude/memory/MEMORY.md` — that file is managed separately "
-        "after all tickets complete.",
+        "Do NOT create or edit any files under `.claude/memory/`. The factory writes "
+        "the per-ticket memory record deterministically from this ticket's summary "
+        "after you finish — you do not need to write memory of any kind.",
         "",
         "Then stop.",
     ]
@@ -999,8 +989,11 @@ def run_chain(
 
     if len(chain) == 1:
         rr = run_ticket(
-            chain[0], repo,
-            capture_cost=capture_cost, dry_run=dry_run, log_dir=log_dir,
+            chain[0],
+            repo,
+            capture_cost=capture_cost,
+            dry_run=dry_run,
+            log_dir=log_dir,
             quota_tracker=quota_tracker,
             executor_providers=executor_providers,
             max_utilization=max_utilization,
@@ -1034,17 +1027,25 @@ def run_chain(
     for ticket in chain:
         typer.echo(f"\n══ chain ticket {ticket.id}: {ticket.title} ══")
         rr = _run_one_ticket_on_chain_branch(
-            ticket=ticket, repo=repo, branch=branch,
+            ticket=ticket,
+            repo=repo,
+            branch=branch,
             capture_cost=capture_cost,
-            providers=_providers, quota_tracker=quota_tracker,
-            max_utilization=max_utilization, log_dir=log_dir,
+            providers=_providers,
+            quota_tracker=quota_tracker,
+            max_utilization=max_utilization,
+            log_dir=log_dir,
         )
         result.per_ticket.append(rr)
         if not rr.success:
             result.error = f"Chain failed at {ticket.id}: {rr.error or rr.reason}"
             _finish_partial_chain(
-                result=result, chain=chain, failed=ticket,
-                repo=repo, branch=branch, dry_run=dry_run,
+                result=result,
+                chain=chain,
+                failed=ticket,
+                repo=repo,
+                branch=branch,
+                dry_run=dry_run,
             )
             result.duration_s = _time.monotonic() - start
             _return_to_default(repo.local_path, repo.default_branch)
@@ -1115,16 +1116,21 @@ def _run_one_ticket_on_chain_branch(
     try:
         if ticket.subtasks:
             agent = _run_subtask_loop(
-                ticket=ticket, repo_path=repo.local_path,
-                capture_cost=capture_cost, providers=providers,
-                quota_tracker=quota_tracker, max_utilization=max_utilization,
+                ticket=ticket,
+                repo_path=repo.local_path,
+                capture_cost=capture_cost,
+                providers=providers,
+                quota_tracker=quota_tracker,
+                max_utilization=max_utilization,
             )
         else:
             agent = _run_with_fallback(
                 repo.local_path,
                 _build_prompt(ticket, repo.local_path),
-                capture_cost=capture_cost, budget_minutes=None,
-                providers=providers, quota_tracker=quota_tracker,
+                capture_cost=capture_cost,
+                budget_minutes=None,
+                providers=providers,
+                quota_tracker=quota_tracker,
                 max_utilization=max_utilization,
             )
         rr.exit_code = agent.exit_code
@@ -1179,9 +1185,13 @@ def _run_one_ticket_on_chain_branch(
             r = run_shell_command(test_cmd, repo.local_path)
             if r.returncode != 0:
                 repair = _attempt_test_repair(
-                    ticket=ticket, repo_path=repo.local_path, test_cmd=test_cmd,
-                    exit_code=r.returncode, capture_cost=capture_cost,
-                    providers=providers, quota_tracker=quota_tracker,
+                    ticket=ticket,
+                    repo_path=repo.local_path,
+                    test_cmd=test_cmd,
+                    exit_code=r.returncode,
+                    capture_cost=capture_cost,
+                    providers=providers,
+                    quota_tracker=quota_tracker,
                     max_utilization=max_utilization,
                 )
                 if repair.exit_code != 0 or repair.timed_out or repair.usage_limit_hit:
@@ -1191,26 +1201,17 @@ def _run_one_ticket_on_chain_branch(
                     return _finalise(rr, start, started_at, log_dir)
                 r = run_shell_command(test_cmd, repo.local_path)
                 if r.returncode != 0:
-                    rr.error = (
-                        f"Tests failed after one repair attempt (exit {r.returncode})"
-                    )
+                    rr.error = f"Tests failed after one repair attempt (exit {r.returncode})"
                     rr.reason = "tests_failed"
                     _discard_uncommitted(repo.local_path)
                     return _finalise(rr, start, started_at, log_dir)
                 files_changed = get_changed_files(repo.local_path)
                 rr.files_changed = files_changed
 
-        # Memory file: Claude writes it; fall back if it forgot.
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
-        memory_file = (
-            repo.local_path / ".claude" / "memory" / f"{ticket.id.lower()}_{today}.md"
+        # Memory file: deterministic from the ticket's own summary (golden path).
+        _write_and_verify_memory(
+            repo.local_path, ticket, files_changed, agent.cost_usd, _time.monotonic() - start
         )
-        if not memory_file.exists():
-            write_run_memory(
-                local_path=repo.local_path, ticket_id=ticket.id,
-                pr_url="(pending)", files_changed=files_changed,
-                cost_usd=agent.cost_usd, duration_s=_time.monotonic() - start,
-            )
 
         commit(repo.local_path, f"{ticket.id}: {ticket.title}")
         rr.success = True
@@ -1265,8 +1266,7 @@ def _finish_partial_chain(
     n_ok = len(succeeded)
     if n_ok == 0:
         typer.echo(
-            f"\nChain failed at its first ticket {failed.id}. "
-            f"Branch '{branch}' preserved; no PR.",
+            f"\nChain failed at its first ticket {failed.id}. Branch '{branch}' preserved; no PR.",
             err=True,
         )
         return
@@ -1298,7 +1298,7 @@ def _finish_partial_chain(
         )
         return
 
-    not_attempted = chain[len(result.per_ticket):]
+    not_attempted = chain[len(result.per_ticket) :]
     push(repo.local_path, branch)
     pr_url = create_pr(
         repo.local_path,

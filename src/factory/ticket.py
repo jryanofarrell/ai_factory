@@ -33,6 +33,7 @@ class Ticket:
     title: str
     target_repo: str
     acceptance_criteria: str
+    summary: str = ""
     scope_paths: list[str] = field(default_factory=list)
     budget_tokens: int = 50_000
     budget_minutes: int = 30
@@ -57,7 +58,10 @@ class Ticket:
         if self.linear_id:
             fm["linear_id"] = self.linear_id
 
-        parts = [f"## Acceptance Criteria\n\n{self.acceptance_criteria}"]
+        parts = []
+        if self.summary:
+            parts.append(f"## Summary\n\n{self.summary}")
+        parts.append(f"## Acceptance Criteria\n\n{self.acceptance_criteria}")
         if self.notes:
             parts.append(f"## Notes\n\n{self.notes}")
         if self.recipes:
@@ -96,6 +100,10 @@ def parse_ticket(path: Path) -> Ticket:
     if acceptance_criteria is None:
         raise ValueError(f"{path}: missing required '## Acceptance Criteria' section")
 
+    summary = _extract_section(body, "Summary")
+    if not summary:
+        raise ValueError(f"{path}: missing required '## Summary' section")
+
     recipes_raw = _extract_section(body, "Recipes") or ""
     recipes = [line.strip() for line in recipes_raw.splitlines() if line.strip()]
 
@@ -108,6 +116,7 @@ def parse_ticket(path: Path) -> Ticket:
         title=str(fm["title"]),
         target_repo=str(fm["target_repo"]),
         acceptance_criteria=acceptance_criteria,
+        summary=summary,
         scope_paths=[p.replace("\\*", "*") for p in (fm.get("scope_paths") or [])],
         budget_tokens=int(fm.get("budget_tokens", 50_000)),
         budget_minutes=int(fm.get("budget_minutes", 30)),
@@ -122,8 +131,9 @@ def parse_ticket(path: Path) -> Ticket:
 
 
 _SUBTASK_HEADER_RE = re.compile(r"^###\s+(?P<id>[^.\s]+)\.\s+(?P<title>.+?)\s*$")
-_SUBTASK_FIELD_RE = re.compile(r"^[-*]\s*(?P<key>Files?|Recipe|Tier|Depends on)\s*:\s*(?P<val>.*)$",
-                               re.IGNORECASE)
+_SUBTASK_FIELD_RE = re.compile(
+    r"^[-*]\s*(?P<key>Files?|Recipe|Tier|Depends on)\s*:\s*(?P<val>.*)$", re.IGNORECASE
+)
 
 
 def _parse_depends_on(section: str) -> list[str]:

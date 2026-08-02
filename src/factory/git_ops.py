@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -433,6 +434,62 @@ def _extract_session_memory_files(local_path: Path, session_branches: list[str])
                 dest.write_text(content.stdout)
 
 
+def _pr_url_for_branch(local_path: Path, github: str, branch: str) -> str | None:
+    """Return the open PR url whose head is `branch`, or None."""
+    result = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            github,
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "url",
+            "--limit",
+            "1",
+        ],
+        cwd=local_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        prs = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return prs[0]["url"] if prs else None
+
+
+def _fold_index_into_pr(
+    local_path: Path, github: str, default_branch: str, branch: str
+) -> str | None:
+    """Single-PR run: rebuild the index on that PR's own branch so the catalog
+    ships in the SAME PR rather than a separate one. Returns the PR url or None."""
+    result = _run(["git", "fetch", "origin", branch], cwd=local_path, stream=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"git fetch origin {branch} failed")
+    result = _run(["git", "checkout", branch], cwd=local_path, stream=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"git checkout {branch} failed")
+    _run(["git", "pull", "--ff-only"], cwd=local_path, stream=True)
+
+    rebuild_memory_index(local_path)
+    pr_url = _pr_url_for_branch(local_path, github, branch)
+    # Scope to .claude/memory/ (per ADR-024 / the memory-index PR scoping) so
+    # stray working-tree files can't ride along in the folded commit.
+    memory_scope = [".claude/memory"]
+    if not has_changes(local_path, memory_scope):
+        return pr_url
+    commit(local_path, "chore: update memory index", memory_scope)
+    push(local_path, branch)
+    return pr_url
+
+
 def _find_open_memory_pr(local_path: Path, github: str) -> tuple[str, str] | None:
     """Return (branch_name, pr_url) for an open factory/memory-* PR on this repo, or None."""
     result = subprocess.run(
@@ -481,7 +538,10 @@ def create_memory_pr(
     not one per batch. If an open `factory/memory-*` PR is found we update it in
     place — check out its branch, merge the latest default branch (ticket PRs
     don't touch MEMORY.md so this is conflict-free in normal operation), rebuild
-    the index, and push. Otherwise create a fresh branch + PR.
+    the index, and push. If instead the run produced exactly ONE ticket/chain PR
+    for the repo (single `session_branches` entry) and no index PR is open, the
+    index is folded into that same PR (_fold_index_into_pr). Otherwise create a
+    fresh branch + PR.
 
     session_branches: factory branches created this run whose per-ticket memory
     files haven't been merged to default yet. Their .claude/memory/ files are
@@ -496,6 +556,13 @@ def create_memory_pr(
     sync_repo(local_path, github, default_branch)
 
     existing = _find_open_memory_pr(local_path, github)
+
+    # Conditional catalog (per user design): if this run produced exactly ONE
+    # ticket/chain PR for the repo and there is no open index PR to reconcile,
+    # fold the index update into that same PR instead of opening a separate one.
+    sole_branch = session_branches[0] if session_branches and len(session_branches) == 1 else None
+    if existing is None and sole_branch is not None:
+        return _fold_index_into_pr(local_path, github, default_branch, sole_branch)
 
     if existing is not None:
         branch, pr_url = existing
@@ -556,21 +623,45 @@ def create_memory_pr(
     )
 
 
-def write_run_memory(
+def _first_sentence(text: str, limit: int = 160) -> str:
+    """Condense a summary to a one-line catalog description.
+
+    Takes text up to the first sentence break (period or newline), collapsing
+    internal whitespace, and hard-truncates over-long results.
+    """
+    flat = " ".join(text.split())
+    match = re.search(r"^(.*?[.!?])(?:\s|$)", flat)
+    sentence = match.group(1) if match else flat
+    if len(sentence) > limit:
+        sentence = sentence[: limit - 1].rstrip() + "…"
+    return sentence
+
+
+def write_ticket_memory(
     local_path: Path,
     ticket_id: str,
+    title: str,
+    summary: str,
     pr_url: str,
     files_changed: list[str],
     cost_usd: float | None,
     duration_s: float,
-) -> None:
-    """Write a memory entry to the target repo's .claude/memory/ after a successful run."""
+    date_str: str | None = None,
+) -> Path:
+    """Write the per-ticket memory file deterministically from the ticket's own summary.
+
+    This is the single golden path for per-ticket memory — no executor prose is
+    required, so it behaves identically regardless of which provider ran the
+    ticket. It writes ONLY the per-ticket file; the MEMORY.md index is rebuilt
+    separately (rebuild_memory_index / create_memory_pr) so ticket PRs never
+    touch the shared index. Returns the path written.
+    """
     from datetime import datetime
 
     memory_dir = local_path / ".claude" / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
 
-    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    date_str = date_str or datetime.now(UTC).strftime("%Y-%m-%d")
     file_name = f"{ticket_id.lower()}_{date_str}.md"
     memory_path = memory_dir / file_name
 
@@ -581,8 +672,8 @@ def write_run_memory(
 
     content = f"""\
 ---
-name: {ticket_id} run {date_str}
-description: Factory ran {ticket_id} on {date_str} — PR opened successfully
+name: {ticket_id}: {title}
+description: {_first_sentence(summary)}
 type: project
 ---
 
@@ -594,19 +685,12 @@ Factory ran ticket **{ticket_id}** on {date_str}.
 **Files changed:**
 {files_str}
 
-**Why:** Ticket was marked Ready For AI in Linear and processed by ai_factory.
+## Summary
+
+{summary.strip()}
 """
     memory_path.write_text(content)
-
-    # Update or create MEMORY.md index
-    index_path = memory_dir / "MEMORY.md"
-    entry = f"- [{ticket_id} ({date_str})]({file_name}) — factory run, PR: {pr_url}"
-    if index_path.exists():
-        existing = index_path.read_text()
-        if file_name not in existing:
-            index_path.write_text(existing.rstrip() + "\n" + entry + "\n")
-    else:
-        index_path.write_text(f"# Run history\n\n{entry}\n")
+    return memory_path
 
 
 def secret_scan(local_path: Path) -> list[str]:
